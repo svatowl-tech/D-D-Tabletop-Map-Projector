@@ -128,6 +128,7 @@ npm run package:release
 
 2. **`.github/workflows/pages.yml`** — Автоматический деплой на GitHub Pages:
    - При каждом пуше в ветку `main` собирает SPA и публикует на GitHub Pages (доступно онлайн по адресу `https://<username>.github.io/<repo>/`).
+   - *Важно (первоначальная настройка на GitHub)*: В настройках репозитория перейдите в **Settings** ➔ **Pages** ➔ в блоке **Build and deployment** выберите **Source: GitHub Actions**.
 
 3. **`.github/workflows/ci.yml`** — Проверка целостности кода:
    - Проверяет TypeScript компиляцию, линтинг и сборку при каждом Pull Request и Push.
