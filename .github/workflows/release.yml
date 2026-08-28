@@ -2,14 +2,17 @@ name: Release Packages (Windows, macOS, Linux, Web)
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v1.0.0)'
-        required: true
-        default: 'v1.0.0'
+        description: 'Release Tag (e.g. v1.0.0, leave blank to use package.json version)'
+        required: false
+        default: ''
       draft:
         description: 'Create Draft Release'
         type: boolean
@@ -49,10 +52,17 @@ jobs:
       - name: Determine Release Tag
         id: vars
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag_name }}" ]; then
             echo "TAG_NAME=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+            echo "RELEASE_NAME=VTT-ZERO ${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "TAG_NAME=${TAG}" >> $GITHUB_OUTPUT
+            echo "RELEASE_NAME=VTT-ZERO ${TAG}" >> $GITHUB_OUTPUT
           else
-            echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "TAG_NAME=v${PKG_VERSION}" >> $GITHUB_OUTPUT
+            echo "RELEASE_NAME=VTT-ZERO v${PKG_VERSION} (Build #${{ github.run_number }})" >> $GITHUB_OUTPUT
           fi
 
       - name: Generate Release Body
@@ -87,7 +97,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.TAG_NAME }}
-          name: VTT-ZERO ${{ steps.vars.outputs.TAG_NAME }}
+          name: ${{ steps.vars.outputs.RELEASE_NAME }}
           body_path: release_body.md
           draft: ${{ github.event.inputs.draft || false }}
           prerelease: ${{ github.event.inputs.prerelease || false }}
