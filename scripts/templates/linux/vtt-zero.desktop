@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VTT-ZERO Tabletop Projector
+Comment=Ultra-lightweight battlemap projector and fog-of-war tool
+Exec=bash -c "$(dirname %k)/launch-dm.sh"
+Icon=video-display
+Terminal=false
+Categories=Game;RolePlaying;
+Keywords=dnd;vtt;map;projector;

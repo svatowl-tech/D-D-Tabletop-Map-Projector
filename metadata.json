@@ -1,0 +1,7 @@
+{
+  "name": "D&D Tabletop Map Projector",
+  "description": "Автономное высокопроизводительное приложение для трансляции карт и тумана войны на второй экран/проектор с нулевыми накладными расходами памяти.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

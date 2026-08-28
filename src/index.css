@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+/* Hardware / Specialist Tool custom styles */
+@layer base {
+  body {
+    background-color: #0a0a0a;
+    color: #e0e0e0;
+  }
+}
+
+/* Custom Hardware Sliders */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #2a2a2a;
+  border-radius: 9999px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #f27d26;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 6px rgba(242, 125, 38, 0.6);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #f27d26;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 6px rgba(242, 125, 38, 0.6);
+  cursor: pointer;
+}
+
+/* Industrial dot-matrix pattern background */
+.bg-dot-matrix {
+  background-color: #0d0d0f;
+  background-image: radial-gradient(#1a1a1a 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #151619;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #f27d26;
+}

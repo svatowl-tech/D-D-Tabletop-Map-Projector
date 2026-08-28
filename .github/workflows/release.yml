@@ -1,0 +1,97 @@
+name: Release Packages (Windows, macOS, Linux, Web)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      draft:
+        description: 'Create Draft Release'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark as Pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release Artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run Typecheck & Lint
+        run: npm run lint
+
+      - name: Package all release artifacts
+        run: npm run package:release
+
+      - name: Determine Release Tag
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG_NAME=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Release Body
+        id: release_notes
+        run: |
+          cat << 'EOF' > release_body.md
+          ## ⚔️ VTT-ZERO Tabletop Map Projector Release
+
+          ### 📦 Download Packages by Platform:
+          - 🪟 **Windows Portable**: `vtt-zero-*-windows-portable.zip` *(Includes `.bat` launchers + 1-click dual screen mode)*
+          - 🍎 **macOS Portable**: `vtt-zero-*-macos-portable.zip` *(Includes `.command` launchers for Mac)*
+          - 🐧 **Linux Portable**: `vtt-zero-*-linux-portable.tar.gz` / `.zip` *(Includes `.sh` scripts + `.desktop` entry)*
+          - 🌐 **Single-File (Universal)**: `vtt-zero-*-standalone.html` *(Zero dependencies, runs in any browser on any OS)*
+          - 🖥️ **Self-Hosting Web SPA**: `vtt-zero-*-web-dist.zip` *(Vite static production build for Nginx/Caddy/Apache/Pages)*
+
+          ---
+
+          ### ✨ Key Capabilities:
+          - **Dual-Window Model**: DM Controller View + Clean Fullscreen Projector / TV View.
+          - **Zero-Latency Sync**: Ultra-fast local synchronization via `BroadcastChannel API` (no network sockets, no delay).
+          - **Dynamic Fog of War**: Reveal / Hide fog with brush controls, Fill All, Clear All, and master opacity preview.
+          - **Hardware-Accelerated Viewport**: Infinite Pan, Zoom, and Auto-Fit with CSS transform translation.
+          - **Media Engine**: Full support for High-Res Maps (JPG, PNG, WebP) and Animated Video Battlemaps (MP4, WebM).
+          - **Square Tactical Grid**: Real-time adjustable grid sizing and opacity.
+          - **100% Offline & Private**: Zero cloud telemetry, zero data collection. Runs seamlessly on vintage laptops (MacBook 2010+, Intel Celeron, Raspberry Pi).
+
+          ### 🔒 Checksums:
+          Verify downloaded file integrity using `SHA256SUMS.txt`.
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.TAG_NAME }}
+          name: VTT-ZERO ${{ steps.vars.outputs.TAG_NAME }}
+          body_path: release_body.md
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          files: |
+            release-artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
