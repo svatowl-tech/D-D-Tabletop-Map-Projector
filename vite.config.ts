@@ -1,16 +1,27 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
+import { viteSingleFile } from 'vite-plugin-singlefile';
 
 export default defineConfig(() => {
+  const isStandalone = process.env.BUILD_STANDALONE === 'true';
+
   return {
     base: './',
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      ...(isStandalone ? [viteSingleFile()] : []),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+    },
+    build: {
+      outDir: isStandalone ? 'dist-standalone' : 'dist',
+      emptyOutDir: true,
     },
     server: {
       port: 3000,

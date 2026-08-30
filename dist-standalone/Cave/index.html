@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Cave Generator</title>
+	
+	<meta id="viewport" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<meta name="mobile-web-app-capable" content="yes">
+	
+	<link rel="shortcut icon" type="image/png" href="./favicon.png">
+	<script type="text/javascript" src="./Cave.js"></script>
+	
+	<script>
+		// PostMessage and SaveAs Interception Bridge for Tabletop Import
+		(function() {
+			var origSaveAs = null;
+			function customSaveAs(blob, filename, disableAutoBOM) {
+				var reader = new FileReader();
+				reader.onload = function(e) {
+					var dataUrl = e.target.result;
+					if (blob.type && blob.type.indexOf('image/png') !== -1) {
+						var img = new Image();
+						img.onload = function() {
+							var msg = {
+								type: 'CAVE_MAP_EXPORT',
+								dataUrl: dataUrl,
+								filename: filename || 'Cave_Map',
+								width: img.naturalWidth || 2048,
+								height: img.naturalHeight || 2048,
+								format: 'png'
+							};
+							if (window.parent && window.parent !== window) {
+								window.parent.postMessage(msg, '*');
+							}
+							if (window.top && window.top !== window && window.top !== window.parent) {
+								window.top.postMessage(msg, '*');
+							}
+						};
+						img.src = dataUrl;
+					} else {
+						var msg = {
+							type: 'CAVE_MAP_EXPORT',
+							dataUrl: dataUrl,
+							filename: filename || 'Cave_Map',
+							format: blob.type || 'unknown'
+						};
+						if (window.parent && window.parent !== window) {
+							window.parent.postMessage(msg, '*');
+						}
+						if (window.top && window.top !== window && window.top !== window.parent) {
+							window.top.postMessage(msg, '*');
+						}
+					}
+				};
+				reader.readAsDataURL(blob);
+
+				if (window.__triggerFileDownload && origSaveAs) {
+					origSaveAs(blob, filename, disableAutoBOM);
+				}
+			}
+
+			try {
+				Object.defineProperty(window, 'saveAs', {
+					get: function() { return customSaveAs; },
+					set: function(fn) { origSaveAs = fn; },
+					configurable: true
+				});
+			} catch(e) {
+				window.saveAs = customSaveAs;
+			}
+
+			function dispatchKey(code, shift) {
+				var eDown = new KeyboardEvent('keydown', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				window.dispatchEvent(eDown);
+				setTimeout(function() {
+					var eUp = new KeyboardEvent('keyup', {
+						keyCode: code,
+						which: code,
+						shiftKey: !!shift,
+						bubbles: true,
+						cancelable: true
+					});
+					window.dispatchEvent(eUp);
+				}, 40);
+			}
+
+			window.addEventListener('message', function(event) {
+				if (!event.data || !event.data.action) return;
+				var action = event.data.action;
+				var scene = window.__watabouCaveScene;
+
+				if (action === 'EXPORT_PNG') {
+					window.__triggerFileDownload = !!event.data.download;
+					if (scene && typeof scene.exportPNG === 'function') {
+						scene.exportPNG();
+					} else {
+						dispatchKey(80); // P
+					}
+				} else if (action === 'GENERATE' || action === 'NEW_CAVE') {
+					if (scene && typeof scene.reset === 'function') {
+						scene.reset();
+					} else {
+						dispatchKey(13); // Enter
+					}
+				} else if (action === 'TOGGLE_GLADE') {
+					if (scene && typeof scene.toggleGlade === 'function') {
+						scene.toggleGlade();
+					} else {
+						dispatchKey(70); // F for Glade in Watabou Cave
+					}
+				} else if (action === 'TOGGLE_TUNNELS') {
+					if (scene && typeof scene.toggleTunnels === 'function') {
+						scene.toggleTunnels();
+					} else {
+						dispatchKey(78); // N
+					}
+				} else if (action === 'TOGGLE_GRID') {
+					if (scene && scene.view && typeof scene.view.toggleGrid === 'function') {
+						scene.view.toggleGrid();
+					} else {
+						dispatchKey(71); // G
+					}
+				} else if (action === 'OPEN_STYLE') {
+					if (scene && typeof scene.showStyle === 'function') {
+						scene.showStyle();
+					} else {
+						dispatchKey(83); // S
+					}
+				} else if (action === 'SET_PRESET') {
+					var preset = event.data.preset;
+					if (scene && typeof scene.loadPalette === 'function') {
+						if (preset === 'default' || preset === 'parchment') scene.loadPalette('parchment');
+						else if (preset === 'dark' || preset === 'moonlight') scene.loadPalette('moonlight');
+						else if (preset === 'bw') scene.loadPalette('bw');
+						else if (preset === 'glade_default') scene.loadPalette('glade_default');
+						else if (preset === 'glade_tropical') scene.loadPalette('glade_tropical');
+						else if (preset === 'glade_autumn') scene.loadPalette('glade_autumn');
+						else if (preset === 'glade_outline') scene.loadPalette('glade_outline');
+						else if (preset === 'glade_reef') scene.loadPalette('glade_reef');
+					} else {
+						if (preset === 'default') dispatchKey(49);
+						else if (preset === 'dark') dispatchKey(50);
+						else if (preset === 'bw') dispatchKey(51);
+					}
+				}
+			});
+		})();
+
+		window.addEventListener ("touchmove", function (event) { event.preventDefault (); }, { capture: false, passive: false });
+		if (typeof window.devicePixelRatio != 'undefined' && window.devicePixelRatio > 2) {
+			var meta = document.getElementById ("viewport");
+			meta.setAttribute ('content', 'width=device-width, initial-scale=' + (2 / window.devicePixelRatio) + ', user-scalable=no');
+		}
+	</script>
+	
+	<style>
+		html,body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+		#openfl-content { background: #000000; width: 100%; height: 100%; }
+		@font-face {
+			font-family: 'Share Tech Regular';
+			src: url('Assets/ShareTech-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/ShareTech-Regular.woff') format('woff'),
+			url('Assets/ShareTech-Regular.ttf') format('truetype'),
+			url('Assets/ShareTech-Regular.svg#Share%20Tech%20Regular') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Mono';
+			src: url('Assets/ShareTechMono-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/ShareTechMono-Regular.woff') format('woff'),
+			url('Assets/ShareTechMono-Regular.ttf') format('truetype'),
+			url('Assets/ShareTechMono-Regular.svg#Share%20Tech%20Mono') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Marcellus';
+			src: url('Assets/Marcellus-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/Marcellus-Regular.woff') format('woff'),
+			url('Assets/Marcellus-Regular.ttf') format('truetype'),
+			url('Assets/Marcellus-Regular.svg#Marcellus') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+	</style>
+</head>
+<body>
+	<noscript>This webpage makes extensive use of JavaScript. Please enable JavaScript in your web browser to view this page.</noscript>
+	<div id="openfl-content"></div>
+	<script type="text/javascript">
+		lime.embed ("Cave", "openfl-content", 0, 0, { parameters: {} });
+	</script>
+</body>
+</html>

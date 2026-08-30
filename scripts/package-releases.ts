@@ -16,7 +16,6 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { createRequire } from 'module';
 import { execSync } from 'child_process';
-import { generateStandaloneHTML } from '../src/utils/standaloneGenerator';
 
 const require = createRequire(import.meta.url);
 const { ZipArchive, TarArchive } = require('archiver');
@@ -37,9 +36,21 @@ if (fs.existsSync(releaseDir)) {
 }
 fs.mkdirSync(releaseDir, { recursive: true });
 
-// 2. Сборка standalone.html
-console.log('🔹 1/5 Building standalone single-file HTML...');
-const standaloneContent = generateStandaloneHTML();
+// 2. Сборка standalone single-file HTML (Полный React SPA, 1:1 соответствующий превью)
+console.log('🔹 1/5 Building standalone single-file HTML (Full React App)...');
+execSync('npx vite build', {
+  stdio: 'inherit',
+  cwd: rootDir,
+  env: { ...process.env, BUILD_STANDALONE: 'true' }
+});
+
+const distStandaloneHtml = path.join(rootDir, 'dist-standalone', 'index.html');
+if (!fs.existsSync(distStandaloneHtml)) {
+  console.error('❌ Error: dist-standalone/index.html not found after build!');
+  process.exit(1);
+}
+
+const standaloneContent = fs.readFileSync(distStandaloneHtml, 'utf-8');
 const standalonePath = path.join(rootDir, 'standalone.html');
 fs.writeFileSync(standalonePath, standaloneContent, 'utf-8');
 
@@ -48,9 +59,13 @@ fs.writeFileSync(path.join(releaseDir, standaloneReleaseFile), standaloneContent
 fs.writeFileSync(path.join(releaseDir, 'vtt-zero-standalone.html'), standaloneContent, 'utf-8');
 console.log(`   ✓ Standalone HTML generated (${(standaloneContent.length / 1024).toFixed(1)} KB)`);
 
-// 3. Сборка Vite Web SPA
+// 3. Сборка Vite Web SPA (Многофайловый веб-билд в dist)
 console.log('\n🔹 2/5 Building Vite Web SPA (npm run build)...');
-execSync('npx vite build', { stdio: 'inherit', cwd: rootDir });
+execSync('npx vite build', {
+  stdio: 'inherit',
+  cwd: rootDir,
+  env: { ...process.env, BUILD_STANDALONE: 'false' }
+});
 console.log('   ✓ Vite production build finished.');
 
 // Вспомогательная функция создания Zip архива
