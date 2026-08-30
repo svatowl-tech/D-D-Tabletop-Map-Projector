@@ -45,8 +45,10 @@ import { AudioSoundboardDrawer } from './AudioSoundboardDrawer';
 import { SRDReferenceDrawer } from './SRDReferenceDrawer';
 import { SceneNotesDrawer } from './SceneNotesDrawer';
 import { MapVaultModal } from './MapVaultModal';
+import { UnifiedAssetFolderModal } from './UnifiedAssetFolderModal';
 import { DiceRollerModal } from './DiceRollerModal';
 import { RandomGeneratorStudioModal } from './RandomGeneratorStudioModal';
+import { PolzaAiStudioModal } from './PolzaAiStudioModal';
 import { PlayerViewportFrameOverlay } from './PlayerViewportFrameOverlay';
 import { HandoutCardPayload } from '../types/generator';
 import { FogEngine } from '../services/fogEngine';
@@ -54,6 +56,9 @@ import { syncService } from '../services/syncChannel';
 import { storageService } from '../services/storageService';
 import { saveSyncedStateToCache } from '../services/syncedStateCache';
 import { audioEngine } from '../services/audioEngine';
+import { mediaCache } from '../services/mediaCache';
+import { assetCatalog } from '../services/assetCatalog';
+import { AssetItem } from '../services/fileSystemService';
 import { SAMPLE_MAPS } from '../utils/sampleMaps';
 import { SRDMonster, SRDSpell } from '../services/srdDatabase';
 import { Eye, EyeOff, Lock, Unlock, Move, Trash2, Tv, Crosshair, Radio, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
@@ -135,8 +140,10 @@ export const DMView: React.FC = () => {
   const [isSRDOpen, setIsSRDOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
   const [isVaultModalOpen, setIsVaultModalOpen] = useState(false);
+  const [isAssetFolderModalOpen, setIsAssetFolderModalOpen] = useState(false);
   const [isDiceModalOpen, setIsDiceModalOpen] = useState(false);
   const [isGeneratorStudioOpen, setIsGeneratorStudioOpen] = useState(false);
+  const [isPolzaAiStudioOpen, setIsPolzaAiStudioOpen] = useState(false);
 
   // Ссылки на DOM и движок тумана
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -899,6 +906,121 @@ export const DMView: React.FC = () => {
     audioEngine.playSFX('roar');
   };
 
+  const handleSelectMapAsBaseFromAsset = async (asset: AssetItem) => {
+    try {
+      const mediaUrl = await assetCatalog.resolveMediaUrl(asset);
+      if (!mediaUrl) return;
+
+      const isVideo = asset.type === 'video' || asset.mimeType.startsWith('video/');
+      const img = new Image();
+      img.onload = () => {
+        const w = img.naturalWidth || 1920;
+        const h = img.naturalHeight || 1080;
+        const baseLayer: MapLayer = {
+          id: `layer_${Date.now()}`,
+          name: asset.name,
+          url: mediaUrl,
+          dataUrl: mediaUrl,
+          x: 0,
+          y: 0,
+          width: w,
+          height: h,
+          opacity: 1,
+          visible: true,
+          zIndex: 1,
+          locked: true,
+          type: isVideo ? 'video' : 'image'
+        };
+
+        setLayers([baseLayer]);
+        setSelectedLayerId(baseLayer.id);
+
+        if (fogEngineRef.current && canvasRef.current) {
+          fogEngineRef.current.resize(w, h);
+          canvasRef.current.width = w;
+          canvasRef.current.height = h;
+          renderFog();
+          fitToScreen(w, h);
+        }
+
+        setIsAssetFolderModalOpen(false);
+      };
+
+      if (isVideo) {
+        const baseLayer: MapLayer = {
+          id: `layer_${Date.now()}`,
+          name: asset.name,
+          url: mediaUrl,
+          dataUrl: mediaUrl,
+          x: 0,
+          y: 0,
+          width: 1920,
+          height: 1080,
+          opacity: 1,
+          visible: true,
+          zIndex: 1,
+          locked: true,
+          type: 'video'
+        };
+        setLayers([baseLayer]);
+        setSelectedLayerId(baseLayer.id);
+        if (fogEngineRef.current && canvasRef.current) {
+          fogEngineRef.current.resize(1920, 1080);
+          canvasRef.current.width = 1920;
+          canvasRef.current.height = 1080;
+          renderFog();
+          fitToScreen(1920, 1080);
+        }
+        setIsAssetFolderModalOpen(false);
+      } else {
+        img.src = mediaUrl;
+      }
+    } catch (err) {
+      console.error('Ошибка загрузки базовой карты из файлов:', err);
+    }
+  };
+
+  const handleAddLayerFromAsset = async (asset: AssetItem) => {
+    try {
+      const mediaUrl = await assetCatalog.resolveMediaUrl(asset);
+      if (!mediaUrl) return;
+
+      const isVideo = asset.type === 'video' || asset.mimeType.startsWith('video/');
+      const newLayer: MapLayer = {
+        id: `layer_${Date.now()}`,
+        name: asset.name,
+        url: mediaUrl,
+        dataUrl: mediaUrl,
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1080,
+        opacity: 1,
+        visible: true,
+        zIndex: layers.length + 1,
+        locked: false,
+        type: isVideo ? 'video' : 'image'
+      };
+
+      setLayers((prev) => [...prev, newLayer]);
+      setSelectedLayerId(newLayer.id);
+      setIsAssetFolderModalOpen(false);
+    } catch (err) {
+      console.error('Ошибка добавления слоя из файлов:', err);
+    }
+  };
+
+  const handlePlayAudioFromAsset = async (asset: AssetItem) => {
+    try {
+      const url = await assetCatalog.resolveMediaUrl(asset);
+      if (!url) return;
+      audioEngine.playCustomAudioTrack(asset.name, url);
+      setIsAudioOpen(true);
+    } catch (err) {
+      console.error('Ошибка воспроизведения аудио из файлов:', err);
+    }
+  };
+
   const firstLayer = layers[0];
   const mapWidth = firstLayer?.width || 1920;
   const mapHeight = firstLayer?.height || 1080;
@@ -924,8 +1046,10 @@ export const DMView: React.FC = () => {
         onToggleNotes={() => setIsNotesOpen(!isNotesOpen)}
         isNotesOpen={isNotesOpen}
         onOpenVaultModal={() => setIsVaultModalOpen(true)}
+        onOpenAssetFolderModal={() => setIsAssetFolderModalOpen(true)}
         onOpenDiceModal={() => setIsDiceModalOpen(true)}
         onOpenGeneratorStudio={() => setIsGeneratorStudioOpen(true)}
+        onOpenPolzaAiStudio={() => setIsPolzaAiStudioOpen(true)}
         audioState={audioState}
       />
 
@@ -1231,6 +1355,40 @@ export const DMView: React.FC = () => {
           });
           setIsGeneratorStudioOpen(false);
           audioEngine.playSFX('fireball');
+        }}
+      />
+
+      <UnifiedAssetFolderModal
+        isOpen={isAssetFolderModalOpen}
+        onClose={() => setIsAssetFolderModalOpen(false)}
+        onSelectMapAsBase={handleSelectMapAsBaseFromAsset}
+        onAddLayerFromAsset={handleAddLayerFromAsset}
+        onPlayAudioFromAsset={handlePlayAudioFromAsset}
+      />
+
+      <PolzaAiStudioModal
+        isOpen={isPolzaAiStudioOpen}
+        onClose={() => setIsPolzaAiStudioOpen(false)}
+        onApplyAssetToMap={(assetUrl, title) => {
+          const newLayer: MapLayer = {
+            id: `layer_ai_token_${Date.now()}`,
+            name: title || 'Polza AI Token',
+            type: 'image',
+            category: 'token',
+            url: assetUrl,
+            visible: true,
+            locked: false,
+            opacity: 1,
+            zIndex: layers.length + 10,
+            x: 200,
+            y: 200,
+            width: 150,
+            height: 150,
+            rotation: 0
+          };
+          setLayers((prev) => [...prev, newLayer]);
+          setSelectedLayerId(newLayer.id);
+          setIsPolzaAiStudioOpen(false);
         }}
       />
     </div>

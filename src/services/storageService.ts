@@ -9,9 +9,10 @@
 import { Scene, MapLayer } from '../types';
 
 const DB_NAME = 'vtt_zero_vault_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const SESSION_STORE = 'session_store';
 const SCENES_STORE = 'scenes_vault';
+const CUSTOM_ASSETS_STORE = 'custom_assets';
 
 export class StorageService {
   private dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -36,6 +37,9 @@ export class StorageService {
           }
           if (!db.objectStoreNames.contains(SCENES_STORE)) {
             db.createObjectStore(SCENES_STORE, { keyPath: 'id' });
+          }
+          if (!db.objectStoreNames.contains(CUSTOM_ASSETS_STORE)) {
+            db.createObjectStore(CUSTOM_ASSETS_STORE, { keyPath: 'id' });
           }
         };
         request.onsuccess = () => {
@@ -175,6 +179,108 @@ export class StorageService {
         resolve();
       }
     });
+  }
+
+  // ==========================================
+  // CUSTOM ASSETS (Браузерное IndexedDB хранилище для idb:// URIs)
+  // ==========================================
+
+  /**
+   * Сохранение медиафайла в IndexedDB (таблица custom_assets)
+   */
+  public async saveAssetToDb(asset: any): Promise<void> {
+    const db = await this.initDB();
+    if (!db) return;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(CUSTOM_ASSETS_STORE, 'readwrite');
+        const store = tx.objectStore(CUSTOM_ASSETS_STORE);
+        store.put(asset);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch (err) {
+        console.warn('[StorageService] Error saving asset to IndexedDB:', err);
+        resolve();
+      }
+    });
+  }
+
+  /**
+   * Получение медиафайла по ID из IndexedDB
+   */
+  public async getAssetFromDb(id: string): Promise<any | null> {
+    const db = await this.initDB();
+    if (!db) return null;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(CUSTOM_ASSETS_STORE, 'readonly');
+        const store = tx.objectStore(CUSTOM_ASSETS_STORE);
+        const req = store.get(id);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (err) {
+        console.warn('[StorageService] Error reading asset from IndexedDB:', err);
+        resolve(null);
+      }
+    });
+  }
+
+  /**
+   * Получение всех сохраненных медиафайлов из IndexedDB
+   */
+  public async getAllAssetsFromDb(): Promise<any[]> {
+    const db = await this.initDB();
+    if (!db) return [];
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(CUSTOM_ASSETS_STORE, 'readonly');
+        const store = tx.objectStore(CUSTOM_ASSETS_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch (err) {
+        console.warn('[StorageService] Error reading all assets from IndexedDB:', err);
+        resolve([]);
+      }
+    });
+  }
+
+  /**
+   * Удаление медиафайла из IndexedDB
+   */
+  public async deleteAssetFromDb(id: string): Promise<void> {
+    const db = await this.initDB();
+    if (!db) return;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(CUSTOM_ASSETS_STORE, 'readwrite');
+        const store = tx.objectStore(CUSTOM_ASSETS_STORE);
+        store.delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch (err) {
+        resolve();
+      }
+    });
+  }
+
+  /**
+   * Получение бинарных данных Blob из IndexedDB по ID
+   */
+  public async getAssetBlobFromDb(id: string): Promise<Blob | null> {
+    const asset = await this.getAssetFromDb(id);
+    return asset && asset.blob ? asset.blob : null;
+  }
+
+  /**
+   * Генерация временно кэшированной URL ссылки на медиа
+   */
+  public getMediaUrl(id: string, blob: Blob): string {
+    return URL.createObjectURL(blob);
   }
 }
 

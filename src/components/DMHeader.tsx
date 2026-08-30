@@ -45,8 +45,10 @@ interface DMHeaderProps {
   onToggleNotes: () => void;
   isNotesOpen: boolean;
   onOpenVaultModal: () => void;
+  onOpenAssetFolderModal?: () => void;
   onOpenDiceModal: () => void;
   onOpenGeneratorStudio?: () => void;
+  onOpenPolzaAiStudio?: () => void;
   audioState: AudioEngineState;
 }
 
@@ -68,8 +70,10 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
   onToggleNotes,
   isNotesOpen,
   onOpenVaultModal,
+  onOpenAssetFolderModal,
   onOpenDiceModal,
   onOpenGeneratorStudio,
+  onOpenPolzaAiStudio,
   audioState
 }) => {
   const [showBlackoutMenu, setShowBlackoutMenu] = useState(false);
@@ -242,6 +246,30 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
           >
             <Sparkles size={13} className="text-[#F27D26]" />
             <span>D&D GEN</span>
+          </button>
+        )}
+
+        {/* Кнопка ИИ-Движка Polza AI Studio */}
+        {onOpenPolzaAiStudio && (
+          <button
+            onClick={onOpenPolzaAiStudio}
+            className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition animate-pulse"
+            title="Polza AI Studio: ИИ-генератор бестиария D&D 5e, сюжетных кампаний и артов"
+          >
+            <Sparkles size={13} className="text-amber-400" />
+            <span>POLZA AI</span>
+          </button>
+        )}
+
+        {/* Кнопка рабочей папки ресурсов AetherMap_Data */}
+        {onOpenAssetFolderModal && (
+          <button
+            onClick={onOpenAssetFolderModal}
+            className="px-2.5 py-1.5 rounded-lg bg-[#2A1F18] hover:bg-[#3D2C20] text-[#F27D26] border border-[#F27D26]/40 text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition"
+            title="Рабочая папка ресурсов AetherMap_Data и автосинхронизация с диском"
+          >
+            <FolderOpen size={13} className="text-[#F27D26]" />
+            <span>AETHERMAP_DATA</span>
           </button>
         )}
 

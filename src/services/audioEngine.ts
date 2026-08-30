@@ -571,6 +571,22 @@ export class AudioEngineService {
     this.bgmLoopTimer = setInterval(playStep, intervalMs);
   }
 
+  private customAudioEl: HTMLAudioElement | null = null;
+
+  public playCustomAudioTrack(name: string, url: string): void {
+    if (this.customAudioEl) {
+      this.customAudioEl.pause();
+      this.customAudioEl = null;
+    }
+    this.customAudioEl = new Audio(url);
+    this.customAudioEl.loop = true;
+    this.customAudioEl.volume = this.state.bgmVolume * this.state.masterVolume;
+    this.customAudioEl.play().catch((err) => console.warn('Custom audio playback error:', err));
+    this.state.activeBgm = name;
+    this.state.isPlaying = true;
+    this.notify();
+  }
+
   public stopAll(): void {
     if (this.bgmLoopTimer) {
       clearInterval(this.bgmLoopTimer);

@@ -5,7 +5,24 @@
   body {
     background-color: #0a0a0a;
     color: #e0e0e0;
+    /* Hardware acceleration for legacy integrated GPU */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeSpeed;
   }
+}
+
+/* Hardware rendering optimizations for legacy GPU (GeForce 320M / 256MB VRAM) */
+canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  transform: translateZ(0);
+}
+
+/* Hardware-accelerated viewport container */
+.viewport-canvas-container {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* Custom Hardware Sliders */
