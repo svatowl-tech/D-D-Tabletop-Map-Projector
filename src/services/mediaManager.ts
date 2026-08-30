@@ -2,12 +2,12 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Модуль управления медиа-ресурсами: загрузка, валидация и обязательное
+ * Модуль управления медиа-ресурсами и слоями: загрузка, валидация и обязательное
  * освобождение памяти (URL.revokeObjectURL) для предотвращения утечек
  * на системах с 2 GB RAM и 256 MB VRAM.
  */
 
-import { MediaItem } from '../types';
+import { MediaItem, MapLayer } from '../types';
 
 export const SUPPORTED_IMAGE_TYPES = [
   'image/jpeg',
@@ -66,7 +66,7 @@ export class MediaManager {
   }
 
   /**
-   * Загрузка файла и создание MediaItem с автоматическим освобождением старого URL
+   * Загрузка файла и создание MediaItem
    */
   public async loadFromFile(file: File): Promise<MediaItem> {
     const check = this.isSupported(file);
@@ -74,11 +74,13 @@ export class MediaManager {
       throw new Error(check.error || 'Ошибка формата файла');
     }
 
-    // Освобождаем предыдущий URL из памяти
     this.releaseCurrentMedia();
 
     const objectUrl = URL.createObjectURL(file);
     this.activeUrls.add(objectUrl);
+
+    // Читаем dataUrl для надежного трансфера/IndexedDB
+    const dataUrl = await this.fileToDataUrl(file).catch(() => undefined);
 
     if (check.type === 'image') {
       const dimensions = await this.getImageDimensions(objectUrl);
@@ -88,6 +90,7 @@ export class MediaManager {
         type: 'image',
         mimeType: file.type || 'image/jpeg',
         url: objectUrl,
+        dataUrl,
         width: dimensions.width,
         height: dimensions.height,
         blob: file
@@ -102,6 +105,7 @@ export class MediaManager {
         type: 'video',
         mimeType: file.type || 'video/mp4',
         url: objectUrl,
+        dataUrl,
         width: dimensions.width,
         height: dimensions.height,
         blob: file
@@ -112,7 +116,93 @@ export class MediaManager {
   }
 
   /**
-   * Создание MediaItem из Blob (используется в окне проектора при получении через канал)
+   * Загрузка слоя (накладываемого изображения) из файла
+   */
+  public async loadLayerFromFile(file: File, x: number = 0, y: number = 0, zIndex: number = 1): Promise<MapLayer> {
+    const check = this.isSupported(file);
+    if (!check.supported || !check.type) {
+      throw new Error(check.error || 'Ошибка формата файла слоя');
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    this.activeUrls.add(objectUrl);
+
+    const dataUrl = await this.fileToDataUrl(file).catch(() => undefined);
+    const dimensions = check.type === 'image' 
+      ? await this.getImageDimensions(objectUrl)
+      : await this.getVideoDimensions(objectUrl);
+
+    const layer: MapLayer = {
+      id: `layer_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      name: file.name.replace(/\.[^/.]+$/, ''),
+      type: check.type,
+      mimeType: file.type || (check.type === 'image' ? 'image/png' : 'video/mp4'),
+      url: objectUrl,
+      dataUrl,
+      blob: file,
+      x,
+      y,
+      width: dimensions.width,
+      height: dimensions.height,
+      naturalWidth: dimensions.width,
+      naturalHeight: dimensions.height,
+      scale: 1.0,
+      rotation: 0,
+      opacity: 1.0,
+      visible: true,
+      locked: false,
+      zIndex
+    };
+
+    return layer;
+  }
+
+  /**
+   * Создание слоя из Blob
+   */
+  public async createLayerFromBlob(
+    blob: Blob,
+    name: string,
+    type: 'image' | 'video',
+    x: number = 0,
+    y: number = 0,
+    zIndex: number = 1
+  ): Promise<MapLayer> {
+    const objectUrl = URL.createObjectURL(blob);
+    this.activeUrls.add(objectUrl);
+
+    const dataUrl = await this.blobToDataUrl(blob).catch(() => undefined);
+    const dimensions = type === 'image'
+      ? await this.getImageDimensions(objectUrl)
+      : await this.getVideoDimensions(objectUrl);
+
+    const layer: MapLayer = {
+      id: `layer_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      name,
+      type,
+      mimeType: blob.type || (type === 'image' ? 'image/png' : 'video/mp4'),
+      url: objectUrl,
+      dataUrl,
+      blob,
+      x,
+      y,
+      width: dimensions.width,
+      height: dimensions.height,
+      naturalWidth: dimensions.width,
+      naturalHeight: dimensions.height,
+      scale: 1.0,
+      rotation: 0,
+      opacity: 1.0,
+      visible: true,
+      locked: false,
+      zIndex
+    };
+
+    return layer;
+  }
+
+  /**
+   * Создание MediaItem из Blob
    */
   public async loadFromBlob(blob: Blob, name: string, type: 'image' | 'video', width?: number, height?: number): Promise<MediaItem> {
     this.releaseCurrentMedia();
@@ -135,18 +225,37 @@ export class MediaManager {
       }
     }
 
+    const dataUrl = await this.blobToDataUrl(blob).catch(() => undefined);
+
     const item: MediaItem = {
       id: `media_${Date.now()}`,
       name,
       type,
       mimeType: blob.type,
       url: objectUrl,
+      dataUrl,
       width: finalWidth,
       height: finalHeight,
       blob
     };
     this.currentMedia = item;
     return item;
+  }
+
+  /**
+   * Преобразование File в Data URL
+   */
+  public fileToDataUrl(file: File | Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  public blobToDataUrl(blob: Blob): Promise<string> {
+    return this.fileToDataUrl(blob);
   }
 
   /**
@@ -181,7 +290,6 @@ export class MediaManager {
           width: video.videoWidth || 1920,
           height: video.videoHeight || 1080
         });
-        // Очищаем временный элемент
         video.src = '';
         video.load();
       };
@@ -191,6 +299,16 @@ export class MediaManager {
       };
       video.src = url;
     });
+  }
+
+  /**
+   * Освобождение памяти для отдельного URL слоя
+   */
+  public revokeUrl(url?: string): void {
+    if (url && url.startsWith('blob:')) {
+      URL.revokeObjectURL(url);
+      this.activeUrls.delete(url);
+    }
   }
 
   /**

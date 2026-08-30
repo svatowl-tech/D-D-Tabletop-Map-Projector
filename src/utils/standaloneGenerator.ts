@@ -2,9 +2,10 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Генератор автономного единого HTML файла (Single-File App),
+ * Генератор автономного единого HTML файла (Single-File App).
  * Тема: Hardware / Specialist Tool
  * Оптимизирован под MacBook 2010 года без интернета и серверов.
+ * Включает полную поддержку наложения нескольких картинок, тумана войны, сетки и надежного рукопожатия.
  */
 
 export function generateStandaloneHTML(): string {
@@ -52,8 +53,11 @@ export function generateStandaloneHTML(): string {
     
     .map-container { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; border: 1px solid #2A2A2A; }
     .map-media { display: block; max-width: none; pointer-events: none; }
-    .fog-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
-    .grid-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    .layers-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    .layer-item { position: absolute; pointer-events: auto; cursor: move; }
+    .layer-item.selected { outline: 2px solid #F27D26; box-shadow: 0 0 10px rgba(242,125,38,0.4); }
+    .fog-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 9000; }
+    .grid-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 9100; }
 
     /* Нижняя панель */
     .footer-bar { height: 26px; background: #151619; border-top: 1px solid #2A2A2A; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; font-family: ui-monospace, monospace; font-size: 10px; color: #8E9299; flex-shrink: 0; }
@@ -78,6 +82,8 @@ export function generateStandaloneHTML(): string {
         mediaType: null,
         mediaWidth: 1920,
         mediaHeight: 1080,
+        layers: [],
+        selectedLayerId: null,
         viewport: { x: 0, y: 0, scale: 1 },
         grid: { enabled: false, size: 50, color: 'rgba(255,255,255,0.25)', offsetX: 0, offsetY: 0 },
         tool: 'reveal',
@@ -90,8 +96,7 @@ export function generateStandaloneHTML(): string {
       let fogCtx = fogCanvas.getContext('2d');
       fogCanvas.width = state.mediaWidth;
       fogCanvas.height = state.mediaHeight;
-      fogCtx.fillStyle = '#000000';
-      fogCtx.fillRect(0, 0, state.mediaWidth, state.mediaHeight);
+      fogCtx.clearRect(0, 0, state.mediaWidth, state.mediaHeight);
 
       if (isPlayer) {
         initPlayerView();
@@ -111,6 +116,10 @@ export function generateStandaloneHTML(): string {
                 </span>
               </div>
               <div style="display:flex; gap:8px;">
+                <label class="btn">
+                  ➕ ADD OVERLAY
+                  <input type="file" id="overlayInput" accept="image/*,video/mp4,video/webm" style="display:none">
+                </label>
                 <label class="btn btn-primary">
                   UPLOAD MAP
                   <input type="file" id="fileInput" accept="image/*,video/mp4,video/webm" style="display:none">
@@ -121,7 +130,8 @@ export function generateStandaloneHTML(): string {
 
             <nav class="toolbar">
               <div class="tool-group">
-                <span class="tool-label">FOG TOOLS:</span>
+                <span class="tool-label">TOOLS:</span>
+                <button class="btn btn-sm" id="btnSelect" title="Select / Move Overlay [V]">SELECT [V]</button>
                 <button class="btn btn-sm btn-active" id="btnReveal" title="Reveal Fog [R]">REVEAL [R]</button>
                 <button class="btn btn-sm" id="btnHide" title="Hide Fog [H]">HIDE [H]</button>
                 <button class="btn btn-sm" id="btnPan" title="Pan Map [Space]">PAN [SPACE]</button>
@@ -164,11 +174,12 @@ export function generateStandaloneHTML(): string {
                   <div style="width:1920px; height:1080px; background:#151619; display:flex; align-items:center; justify-content:center; color:#8E9299; font-family:monospace;">
                     <div style="text-align:center;">
                       <div style="font-size:36px; margin-bottom:8px; color:#F27D26;">🗺️</div>
-                      <div style="font-size:15px; font-weight:bold; color:#E0E0E0;">DROP MAP FILE HERE OR CLICK UPLOAD MAP</div>
-                      <div style="font-size:11px; margin-top:4px; color:#8E9299;">JPG, PNG, WebP, MP4, WebM (Hardware Accelerated)</div>
+                      <div style="font-size:15px; font-weight:bold; color:#E0E0E0;">DROP MAP FILE OR OVERLAYS HERE</div>
+                      <div style="font-size:11px; margin-top:4px; color:#8E9299;">JPG, PNG, WebP, MP4, WebM (Multi-Layer Hardware Accelerated)</div>
                     </div>
                   </div>
                 </div>
+                <div class="layers-container" id="layersContainer"></div>
                 <canvas class="fog-canvas" id="displayFogCanvas"></canvas>
                 <div class="grid-layer" id="gridLayer"></div>
               </div>
@@ -177,9 +188,10 @@ export function generateStandaloneHTML(): string {
             <footer class="footer-bar">
               <div id="footerMap">LOADED: DEFAULT_BUFFER.JPG</div>
               <div style="display:flex; gap:16px;">
+                <span>LAYERS: <strong id="footerLayers" style="color:#F27D26;">0</strong></span>
                 <span>BROADCAST: <strong id="footerChan" style="color:#8E9299;">STANDBY</strong></span>
                 <span>MEM: <span style="color:#00FF00;">14.2 MB</span></span>
-                <span style="color:#F27D26; font-weight:bold;">v1.0.4-LITE</span>
+                <span style="color:#F27D26; font-weight:bold;">v1.1.0-LITE</span>
               </div>
             </footer>
           </div>
@@ -190,9 +202,11 @@ export function generateStandaloneHTML(): string {
 
       function setupMasterControls() {
         const fileInput = document.getElementById('fileInput');
+        const overlayInput = document.getElementById('overlayInput');
         const openPlayerBtn = document.getElementById('openPlayerBtn');
         const viewport = document.getElementById('viewport');
         const mapContainer = document.getElementById('mapContainer');
+        const layersContainer = document.getElementById('layersContainer');
         const displayFogCanvas = document.getElementById('displayFogCanvas');
         const gridLayer = document.getElementById('gridLayer');
         const brushSlider = document.getElementById('brushSlider');
@@ -205,6 +219,7 @@ export function generateStandaloneHTML(): string {
         const statusText = document.getElementById('statusText');
         const footerChan = document.getElementById('footerChan');
         const footerMap = document.getElementById('footerMap');
+        const footerLayers = document.getElementById('footerLayers');
 
         displayFogCanvas.width = state.mediaWidth;
         displayFogCanvas.height = state.mediaHeight;
@@ -228,15 +243,26 @@ export function generateStandaloneHTML(): string {
           if (e.target.files && e.target.files[0]) loadFile(e.target.files[0]);
         });
 
+        overlayInput.addEventListener('change', (e) => {
+          if (e.target.files && e.target.files[0]) addOverlayFile(e.target.files[0]);
+        });
+
         window.addEventListener('dragover', (e) => e.preventDefault());
         window.addEventListener('drop', (e) => {
           e.preventDefault();
-          if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            loadFile(e.dataTransfer.files[0]);
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            for (let i = 0; i < e.dataTransfer.files.length; i++) {
+              if (i === 0 && !state.mediaUrl) {
+                loadFile(e.dataTransfer.files[i]);
+              } else {
+                addOverlayFile(e.dataTransfer.files[i]);
+              }
+            }
           }
         });
 
         const toolBtns = {
+          select: document.getElementById('btnSelect'),
           reveal: document.getElementById('btnReveal'),
           hide: document.getElementById('btnHide'),
           pan: document.getElementById('btnPan')
@@ -244,13 +270,25 @@ export function generateStandaloneHTML(): string {
 
         function setTool(t) {
           state.tool = t;
-          Object.keys(toolBtns).forEach(k => toolBtns[k].classList.toggle('btn-active', k === t));
+          Object.keys(toolBtns).forEach(k => {
+            if (toolBtns[k]) toolBtns[k].classList.toggle('btn-active', k === t);
+          });
           viewport.classList.toggle('pan-mode', t === 'pan');
         }
 
+        toolBtns.select.addEventListener('click', () => setTool('select'));
         toolBtns.reveal.addEventListener('click', () => setTool('reveal'));
         toolBtns.hide.addEventListener('click', () => setTool('hide'));
         toolBtns.pan.addEventListener('click', () => setTool('pan'));
+
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'v' || e.key === 'V') setTool('select');
+          if (e.key === 'r' || e.key === 'R') setTool('reveal');
+          if (e.key === 'h' || e.key === 'H') setTool('hide');
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (state.selectedLayerId) removeLayer(state.selectedLayerId);
+          }
+        });
 
         document.getElementById('btnFillAll').addEventListener('click', () => {
           fogCtx.globalCompositeOperation = 'source-over';
@@ -303,6 +341,8 @@ export function generateStandaloneHTML(): string {
 
         let isDrawing = false;
         let isPanning = false;
+        let isMovingLayer = false;
+        let activeDragLayer = null;
         let panStart = { x: 0, y: 0 };
         let lastPt = null;
         let strokePoints = [];
@@ -315,12 +355,41 @@ export function generateStandaloneHTML(): string {
             return;
           }
 
-          if (e.button === 0 && (state.tool === 'reveal' || state.tool === 'hide')) {
-            isDrawing = true;
+          if (e.button === 0) {
             const pt = getCoords(e);
-            lastPt = pt;
-            strokePoints = [pt];
-            drawStroke(pt, pt);
+
+            if (state.tool === 'select') {
+              // Ищем слой под курсором
+              const target = state.layers.slice().reverse().find(l => {
+                const w = l.width * l.scale;
+                const h = l.height * l.scale;
+                return pt.x >= l.x && pt.x <= l.x + w && pt.y >= l.y && pt.y <= l.y + h;
+              });
+
+              if (target) {
+                state.selectedLayerId = target.id;
+                isMovingLayer = true;
+                activeDragLayer = {
+                  id: target.id,
+                  startX: pt.x,
+                  startY: pt.y,
+                  initialX: target.x,
+                  initialY: target.y
+                };
+                renderLayersDOM();
+                return;
+              } else {
+                state.selectedLayerId = null;
+                renderLayersDOM();
+              }
+            }
+
+            if (state.tool === 'reveal' || state.tool === 'hide') {
+              isDrawing = true;
+              lastPt = pt;
+              strokePoints = [pt];
+              drawStroke(pt, pt);
+            }
           }
         });
 
@@ -329,6 +398,24 @@ export function generateStandaloneHTML(): string {
             state.viewport.x = e.clientX - panStart.x;
             state.viewport.y = e.clientY - panStart.y;
             applyTransform();
+            return;
+          }
+
+          if (isMovingLayer && activeDragLayer) {
+            const pt = getCoords(e);
+            const dx = pt.x - activeDragLayer.startX;
+            const dy = pt.y - activeDragLayer.startY;
+            const layer = state.layers.find(l => l.id === activeDragLayer.id);
+            if (layer) {
+              layer.x = Math.round(activeDragLayer.initialX + dx);
+              layer.y = Math.round(activeDragLayer.initialY + dy);
+              renderLayersDOM();
+              sendMsg({
+                type: 'UPDATE_LAYER_TRANSFORM',
+                layerId: layer.id,
+                transform: { x: layer.x, y: layer.y }
+              });
+            }
             return;
           }
 
@@ -352,6 +439,11 @@ export function generateStandaloneHTML(): string {
           if (isPanning) {
             isPanning = false;
             viewport.classList.remove('panning');
+          }
+          if (isMovingLayer) {
+            isMovingLayer = false;
+            activeDragLayer = null;
+            sendMsg({ type: 'SYNC_LAYERS', layers: state.layers });
           }
           if (isDrawing) {
             isDrawing = false;
@@ -466,54 +558,125 @@ export function generateStandaloneHTML(): string {
           }
 
           const isVideo = file.type.startsWith('video/') || /\\.(mp4|webm)$/i.test(file.name);
-          const url = URL.createObjectURL(file);
-          state.mediaUrl = url;
-          state.mediaType = isVideo ? 'video' : 'image';
-          footerMap.textContent = 'LOADED: ' + file.name.toUpperCase();
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const dataUrl = e.target.result;
+            state.mediaUrl = dataUrl;
+            state.mediaType = isVideo ? 'video' : 'image';
+            footerMap.textContent = 'LOADED: ' + file.name.toUpperCase();
 
-          const slot = document.getElementById('mediaSlot');
-          if (isVideo) {
-            slot.innerHTML = \`<video src="\${url}" autoplay loop muted playsinline class="map-media"></video>\`;
-            const v = slot.querySelector('video');
-            v.onloadedmetadata = () => {
-              state.mediaWidth = v.videoWidth || 1920;
-              state.mediaHeight = v.videoHeight || 1080;
-              v.style.width = state.mediaWidth + 'px';
-              v.style.height = state.mediaHeight + 'px';
-              resizeMask();
-              fitMapToViewport();
-              sendFullSync();
-            };
-          } else {
-            slot.innerHTML = \`<img src="\${url}" class="map-media">\`;
-            const img = slot.querySelector('img');
+            const slot = document.getElementById('mediaSlot');
+            if (isVideo) {
+              slot.innerHTML = \`<video src="\${dataUrl}" autoplay loop muted playsinline class="map-media"></video>\`;
+              const v = slot.querySelector('video');
+              v.onloadedmetadata = () => {
+                state.mediaWidth = v.videoWidth || 1920;
+                state.mediaHeight = v.videoHeight || 1080;
+                v.style.width = state.mediaWidth + 'px';
+                v.style.height = state.mediaHeight + 'px';
+                resizeMask();
+                fitMapToViewport();
+                sendFullSync();
+              };
+            } else {
+              slot.innerHTML = \`<img src="\${dataUrl}" class="map-media">\`;
+              const img = slot.querySelector('img');
+              img.onload = () => {
+                state.mediaWidth = img.naturalWidth || 1920;
+                state.mediaHeight = img.naturalHeight || 1080;
+                img.style.width = state.mediaWidth + 'px';
+                img.style.height = state.mediaHeight + 'px';
+                resizeMask();
+                fitMapToViewport();
+                sendFullSync();
+              };
+            }
+          };
+          reader.readAsDataURL(file);
+        }
+
+        function addOverlayFile(file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const dataUrl = e.target.result;
+            const img = new Image();
             img.onload = () => {
-              state.mediaWidth = img.naturalWidth || 1920;
-              state.mediaHeight = img.naturalHeight || 1080;
-              img.style.width = state.mediaWidth + 'px';
-              img.style.height = state.mediaHeight + 'px';
-              resizeMask();
-              fitMapToViewport();
-              sendFullSync();
+              const maxZ = state.layers.reduce((m, l) => Math.max(m, l.zIndex), 0);
+              const layer = {
+                id: 'layer_' + Date.now(),
+                name: file.name,
+                type: 'image',
+                url: dataUrl,
+                dataUrl: dataUrl,
+                width: img.naturalWidth || 400,
+                height: img.naturalHeight || 400,
+                x: Math.round(state.mediaWidth / 4),
+                y: Math.round(state.mediaHeight / 4),
+                scale: 1.0,
+                rotation: 0,
+                opacity: 1.0,
+                zIndex: maxZ + 1,
+                visible: true,
+                locked: false
+              };
+              state.layers.push(layer);
+              state.selectedLayerId = layer.id;
+              footerLayers.textContent = state.layers.length;
+              renderLayersDOM();
+              sendMsg({ type: 'SYNC_LAYERS', layers: state.layers });
+              setTool('select');
             };
-          }
+            img.src = dataUrl;
+          };
+          reader.readAsDataURL(file);
+        }
 
-          sendMsg({
-            type: 'SET_MEDIA',
-            mediaType: state.mediaType,
-            mimeType: file.type,
-            blob: file,
-            width: state.mediaWidth,
-            height: state.mediaHeight,
-            name: file.name
+        function removeLayer(id) {
+          state.layers = state.layers.filter(l => l.id !== id);
+          if (state.selectedLayerId === id) state.selectedLayerId = null;
+          footerLayers.textContent = state.layers.length;
+          renderLayersDOM();
+          sendMsg({ type: 'REMOVE_LAYER', layerId: id });
+        }
+
+        function renderLayersDOM() {
+          layersContainer.innerHTML = '';
+          const sorted = state.layers.slice().sort((a, b) => a.zIndex - b.zIndex);
+          sorted.forEach(l => {
+            if (!l.visible) return;
+            const div = document.createElement('div');
+            div.className = 'layer-item' + (l.id === state.selectedLayerId ? ' selected' : '');
+            div.style.left = l.x + 'px';
+            div.style.top = l.y + 'px';
+            div.style.width = (l.width * l.scale) + 'px';
+            div.style.height = (l.height * l.scale) + 'px';
+            div.style.transform = 'rotate(' + (l.rotation || 0) + 'deg)';
+            div.style.opacity = l.opacity !== undefined ? l.opacity : 1.0;
+            div.style.zIndex = l.zIndex;
+
+            const img = document.createElement('img');
+            img.src = l.dataUrl || l.url;
+            img.style.width = '100%';
+            img.style.height = '100%';
+            img.style.pointerEvents = 'none';
+            div.appendChild(img);
+
+            div.addEventListener('click', (e) => {
+              if (state.tool === 'select') {
+                e.stopPropagation();
+                state.selectedLayerId = l.id;
+                renderLayersDOM();
+              }
+            });
+
+            layersContainer.appendChild(div);
           });
         }
 
         function resizeMask() {
           fogCanvas.width = state.mediaWidth;
           fogCanvas.height = state.mediaHeight;
-          fogCtx.fillStyle = '#000000';
-          fogCtx.fillRect(0, 0, state.mediaWidth, state.mediaHeight);
+          fogCtx.clearRect(0, 0, state.mediaWidth, state.mediaHeight);
 
           displayFogCanvas.width = state.mediaWidth;
           displayFogCanvas.height = state.mediaHeight;
@@ -529,11 +692,13 @@ export function generateStandaloneHTML(): string {
             state: {
               hasMedia: !!state.mediaUrl,
               mediaType: state.mediaType,
+              dataUrl: state.mediaUrl,
               mediaWidth: state.mediaWidth,
               mediaHeight: state.mediaHeight,
               viewport: state.viewport,
               grid: state.grid,
-              maskDataUrl: fogCanvas.toDataURL('image/png')
+              maskDataUrl: fogCanvas.toDataURL('image/png'),
+              layers: state.layers
             }
           });
         }
@@ -560,6 +725,7 @@ export function generateStandaloneHTML(): string {
                   <span>WAITING FOR DM TRANSMISSION (VTT-ZERO)...</span>
                 </div>
               </div>
+              <div class="layers-container" id="pLayersContainer"></div>
               <canvas class="fog-canvas" id="pFogCanvas"></canvas>
               <div class="grid-layer" id="pGridLayer"></div>
             </div>
@@ -569,6 +735,7 @@ export function generateStandaloneHTML(): string {
 
         const container = document.getElementById('pMapContainer');
         const mediaSlot = document.getElementById('pMediaSlot');
+        const pLayersContainer = document.getElementById('pLayersContainer');
         const fogCanvas = document.getElementById('pFogCanvas');
         const fogCtx = fogCanvas.getContext('2d');
         const gridLayer = document.getElementById('pGridLayer');
@@ -576,8 +743,7 @@ export function generateStandaloneHTML(): string {
 
         fogCanvas.width = 1920;
         fogCanvas.height = 1080;
-        fogCtx.fillStyle = '#000000';
-        fogCtx.fillRect(0, 0, 1920, 1080);
+        fogCtx.clearRect(0, 0, 1920, 1080);
 
         fsBtn.addEventListener('click', () => {
           if (!document.fullscreenElement) {
@@ -587,7 +753,34 @@ export function generateStandaloneHTML(): string {
           }
         });
 
-        let currentUrl = null;
+        let currentLayers = [];
+
+        function renderPlayerLayers(layers) {
+          currentLayers = layers || [];
+          pLayersContainer.innerHTML = '';
+          const sorted = currentLayers.slice().sort((a, b) => a.zIndex - b.zIndex);
+          sorted.forEach(l => {
+            if (!l.visible) return;
+            const div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.style.left = l.x + 'px';
+            div.style.top = l.y + 'px';
+            div.style.width = (l.width * l.scale) + 'px';
+            div.style.height = (l.height * l.scale) + 'px';
+            div.style.transform = 'rotate(' + (l.rotation || 0) + 'deg)';
+            div.style.opacity = l.opacity !== undefined ? l.opacity : 1.0;
+            div.style.zIndex = l.zIndex;
+            div.style.pointerEvents = 'none';
+
+            const img = document.createElement('img');
+            img.src = l.dataUrl || l.url;
+            img.style.width = '100%';
+            img.style.height = '100%';
+            div.appendChild(img);
+
+            pLayersContainer.appendChild(div);
+          });
+        }
 
         function applyTrans(t) {
           container.style.transform = \`translate3d(\${t.x}px, \${t.y}px, 0) scale(\${t.scale})\`;
@@ -596,20 +789,16 @@ export function generateStandaloneHTML(): string {
         if (channel) {
           channel.onmessage = (e) => {
             const msg = e.data;
-            if (msg.type === 'SET_MEDIA' && msg.blob) {
-              if (currentUrl && currentUrl.startsWith('blob:')) {
-                URL.revokeObjectURL(currentUrl);
-              }
-              currentUrl = URL.createObjectURL(msg.blob);
+            if (msg.type === 'SET_MEDIA' && (msg.dataUrl || msg.blob)) {
+              const url = msg.dataUrl || (msg.blob ? URL.createObjectURL(msg.blob) : '');
               if (msg.mediaType === 'video') {
-                mediaSlot.innerHTML = \`<video src="\${currentUrl}" autoplay loop muted playsinline class="map-media" style="width:\${msg.width}px; height:\${msg.height}px;"></video>\`;
+                mediaSlot.innerHTML = \`<video src="\${url}" autoplay loop muted playsinline class="map-media" style="width:\${msg.width}px; height:\${msg.height}px;"></video>\`;
               } else {
-                mediaSlot.innerHTML = \`<img src="\${currentUrl}" class="map-media" style="width:\${msg.width}px; height:\${msg.height}px;">\`;
+                mediaSlot.innerHTML = \`<img src="\${url}" class="map-media" style="width:\${msg.width}px; height:\${msg.height}px;">\`;
               }
               fogCanvas.width = msg.width;
               fogCanvas.height = msg.height;
-              fogCtx.fillStyle = '#000000';
-              fogCtx.fillRect(0, 0, msg.width, msg.height);
+              fogCtx.clearRect(0, 0, msg.width, msg.height);
               gridLayer.style.width = msg.width + 'px';
               gridLayer.style.height = msg.height + 'px';
             } else if (msg.type === 'SYNC_VIEWPORT') {
@@ -621,6 +810,17 @@ export function generateStandaloneHTML(): string {
               } else {
                 gridLayer.style.backgroundImage = 'none';
               }
+            } else if (msg.type === 'SYNC_LAYERS') {
+              renderPlayerLayers(msg.layers);
+            } else if (msg.type === 'UPDATE_LAYER_TRANSFORM') {
+              const l = currentLayers.find(item => item.id === msg.layerId);
+              if (l) {
+                Object.assign(l, msg.transform);
+                renderPlayerLayers(currentLayers);
+              }
+            } else if (msg.type === 'REMOVE_LAYER') {
+              currentLayers = currentLayers.filter(l => l.id !== msg.layerId);
+              renderPlayerLayers(currentLayers);
             } else if (msg.type === 'FOG_STROKE') {
               const { mode, radius, points } = msg.stroke;
               fogCtx.save();
@@ -655,7 +855,23 @@ export function generateStandaloneHTML(): string {
               fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
             } else if (msg.type === 'SYNC_FULL_STATE') {
               const s = msg.state;
+              if (s.hasMedia && s.dataUrl) {
+                mediaSlot.innerHTML = \`<img src="\${s.dataUrl}" class="map-media" style="width:\${s.mediaWidth}px; height:\${s.mediaHeight}px;">\`;
+                fogCanvas.width = s.mediaWidth;
+                fogCanvas.height = s.mediaHeight;
+                gridLayer.style.width = s.mediaWidth + 'px';
+                gridLayer.style.height = s.mediaHeight + 'px';
+              }
+              if (s.layers) renderPlayerLayers(s.layers);
               if (s.viewport) applyTrans(s.viewport);
+              if (s.grid) {
+                if (s.grid.enabled) {
+                  gridLayer.style.backgroundImage = \`linear-gradient(to right, \${s.grid.color} 1px, transparent 1px), linear-gradient(to bottom, \${s.grid.color} 1px, transparent 1px)\`;
+                  gridLayer.style.backgroundSize = \`\${s.grid.size}px \${s.grid.size}px\`;
+                } else {
+                  gridLayer.style.backgroundImage = 'none';
+                }
+              }
               if (s.maskDataUrl) {
                 const img = new Image();
                 img.onload = () => {
@@ -667,6 +883,10 @@ export function generateStandaloneHTML(): string {
             }
           };
 
+          // Периодическое рукопожатие каждые 1.5 секунды, пока мастер не ответит
+          const handshakeTimer = setInterval(() => {
+            sendMsg({ type: 'HANDSHAKE_REQUEST' });
+          }, 1500);
           sendMsg({ type: 'HANDSHAKE_REQUEST' });
         }
       }

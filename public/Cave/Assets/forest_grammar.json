@@ -1,0 +1,36 @@
+{
+	"name" : [
+		"#glade# of #proper#",
+		"#proper#'s #glade#",
+		"#adj# #glade#",
+		"the #adj# #glade#",
+		"the #glade# of #trees#",
+		"the #glade# of #beasts#",
+		"the #glade# of the #fey#",
+		"#adjPlace# #glade#"
+	],
+
+	"glade" : [
+		"Glade", "Clearing", "Grove", "Meadow", "Hollow", "Thicket", "Sward", "Coppice", "Bower", "Haven", "Green", "Sanctuary", "Pasture", "Dale", "Vale", "Wood"
+	],
+
+	"fey" : [
+		"Fey", "Fairies", "Spirits", "Nymphs", "Dryads", "Elves", "Unicorn", "Stag", "Ancient One", "Forest Queen", "Green Knight", "Moon", "Sun", "Stars"
+	],
+
+	"beasts" : [
+		"Stags", "Wolves", "Bears", "Owls", "Foxes", "Ravens", "Boars", "Serpents"
+	],
+
+	"trees" : [
+		"Oaks", "Elms", "Birches", "Pines", "Willows", "Alders", "Rowans", "Cedars", "Yews", "Thorns", "Briars"
+	],
+
+	"adj" : [
+		"Sunlit", "Moonlit", "Shadowed", "Hidden", "Enchanted", "Secret", "Whispering", "Ancient", "Quiet", "Silent", "Verdant", "Emerald", "Golden", "Misty", "Sacred", "Twilight", "Peaceful", "Fey", "Mossy", "Blooming", "Wild"
+	],
+
+	"adjPlace" : [
+		"Deep", "High", "Low", "Far", "Lost", "Hidden", "Sunlit", "Green", "Misty", "Fey"
+	]
+}

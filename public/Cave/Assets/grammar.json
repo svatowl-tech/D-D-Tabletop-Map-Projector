@@ -1,0 +1,47 @@
+{
+	"name" : [
+		"#cave# of #proper#",
+		"#cave# of #fantasy#",
+		"#cave# of the #monstrous#",
+		"#cave# of #adjPlace# #feature#",
+		"#proper#'s #cave#",
+		"#fantasy#'s #cave#",
+		"#adj# #cave#",
+		"the #adj# #cave#",
+		"the #cave# of #color# #rock#",
+		"the #monstrous# #den#"
+	],
+
+	"cave" : [
+		"Cave", "Caves", "Cavern", "Caverns", "Grotto", "Grot", "Den", "Hollow", "Deep", "Chasm", "Abyss", "Pit", "Crawl", "Lair", "Hole", "Underworld", "Vault", "Warren", "Crypt", "Tomb", "Catacomb", "Fissure", "Crevasse", "Gulch", "Gorge"
+	],
+
+	"den" : [
+		"Lair", "Den", "Roost", "Nest", "Haunt", "Burrow", "Hole", "Pit"
+	],
+
+	"monstrous" : [
+		"Dragon", "Wyrm", "Beast", "Shadow", "Serpent", "Demon", "Ghoul", "Troll", "Ogre", "Giant", "Goblin", "Specter", "Wraith", "Spider", "Bat", "Basilisk", "Hydra", "Minotaur", "Gargoyle", "Lich", "Vampire", "Nightmare"
+	],
+
+	"feature" : [
+		"{crystals|gems|stalactites}", "echoes", "shadows", "darkness", "bones", "skulls", "whispers", "torments", "fools", "giants", "sorrow", "dread",
+		"WATER?-{underground lake|sunken pools|drips|subterranean stream|murky waters}"
+	],
+
+	"rock" : [
+		"Stone", "Rock", "Basalt", "Granite", "Obsidian", "Flint", "Limestone", "Quartz", "Slate", "Marble", "Brimstone", "Sulfur", "Crystal"
+	],
+
+	"adj" : [
+		"Deep", "Dark", "Sunken", "Forgotten", "Ancient", "Hollow", "Echoing", "Twisting", "Silent", "Endless", "Black", "Grim", "Haunted", "Hidden", "Forsaken", "Bleak", "Shattered", "Frozen", "Burning", "Lost", "Dread", "Shadowed", "Gloom", "Abyssal", "Cursed", "Wicked", "Iron", "Blood", "Bone", "Ghostly", "Subterranean"
+	],
+
+	"adjPlace" : [
+		"Deep", "High", "Low", "Far", "Lost", "Forgotten", "Dark", "Misty", "Haunted", "Silent", "Echoing", "Frozen", "Grim"
+	],
+
+	"color" : [
+		"Black", "White", "Red", "Grey", "Green", "Pale", "Dark", "Crimson", "Ashen", "Blood", "Emerald", "Obsidian"
+	]
+}

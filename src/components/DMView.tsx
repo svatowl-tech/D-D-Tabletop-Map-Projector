@@ -2,207 +2,395 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Основной рабочий экран Мастера (DM View).
- * Тема: Hardware / Specialist Tool
- * Цвета: #0A0A0A, #151619, #2A2A2A, #3A3A3A, #F27D26 (Hardware Orange), #00FF00
+ * Главный экран Мастера Подземелий (DM View).
+ * 
+ * Особенности:
+ * - Многослойная тактическая карта с сеткой и перетаскиванием слоев.
+ * - Движок Тумана Войны: кисти, прямоугольники, круги, инверсия, текстурные стили.
+ * - Линейка-дальномер (D&D 5e 5-10-5, метры, клетки).
+ * - Шаблоны заклинаний (Конус, Сфера, Линия, Куб).
+ * - Тактическое рисование и лазерная указка с затухающим следом.
+ * - Интерактивный Combat Tracker с инициативой и SRD бестиарием.
+ * - Web Audio эмбиент и звуковая панель (SFX / BGM).
+ * - Хранилище кампании (Map Vault) и BSP процедурный генератор подземелий.
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  AppMode,
-  FogToolMode,
+  DMTool,
   GridConfig,
-  MediaItem,
+  MapLayer,
   ViewportTransform,
   StrokePoint,
   MapPing,
-  FullSyncedState
+  LaserPoint,
+  TacticalDrawing,
+  SpellTemplate,
+  RulerMeasurement,
+  BlackoutTheme,
+  CombatTrackerState,
+  Combatant,
+  DiceRollResult,
+  Scene,
+  FogTextureStyle,
+  AudioEngineState
 } from '../types';
+import { DMHeader } from './DMHeader';
 import { DMToolbar } from './DMToolbar';
 import { GridOverlay } from './GridOverlay';
 import { PingOverlay } from './PingOverlay';
+import { TacticalDrawingOverlay } from './TacticalDrawingOverlay';
+import { CombatTrackerDrawer } from './CombatTrackerDrawer';
+import { AudioSoundboardDrawer } from './AudioSoundboardDrawer';
+import { SRDReferenceDrawer } from './SRDReferenceDrawer';
+import { SceneNotesDrawer } from './SceneNotesDrawer';
+import { MapVaultModal } from './MapVaultModal';
+import { DiceRollerModal } from './DiceRollerModal';
+import { RandomGeneratorStudioModal } from './RandomGeneratorStudioModal';
+import { PlayerViewportFrameOverlay } from './PlayerViewportFrameOverlay';
+import { HandoutCardPayload } from '../types/generator';
 import { FogEngine } from '../services/fogEngine';
-import { mediaManager } from '../services/mediaManager';
 import { syncService } from '../services/syncChannel';
-import { SampleMapDefinition, SAMPLE_MAPS } from '../utils/sampleMaps';
+import { storageService } from '../services/storageService';
+import { saveSyncedStateToCache } from '../services/syncedStateCache';
+import { audioEngine } from '../services/audioEngine';
+import { SAMPLE_MAPS } from '../utils/sampleMaps';
+import { SRDMonster, SRDSpell } from '../services/srdDatabase';
+import { Eye, EyeOff, Lock, Unlock, Move, Trash2, Tv, Crosshair, Radio, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 
 export const DMView: React.FC = () => {
-  // Состояния медиа и холста
-  const [media, setMedia] = useState<MediaItem | null>(null);
+  // 1. Базовые сцены кампании
+  const [allScenes, setAllScenes] = useState<Scene[]>([
+    {
+      id: 'scene_default',
+      name: 'Crypt of the Sunken King',
+      grid: {
+        enabled: true,
+        size: 60,
+        color: 'rgba(255, 255, 255, 0.25)',
+        opacity: 0.5,
+        type: 'square',
+        offsetX: 0,
+        offsetY: 0
+      },
+      layers: [],
+      drawings: [],
+      portals: [],
+      notes: 'Ancient underground tomb guarded by restless skeletal sentinels.'
+    }
+  ]);
+
+  const [currentScene, setCurrentScene] = useState<Scene>(allScenes[0]);
+
+  // Слои активной сцены
+  const [layers, setLayers] = useState<MapLayer[]>([]);
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+
+  // Камера и зум Мастера
   const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, scale: 1 });
-  const [tool, setTool] = useState<FogToolMode>('reveal');
-  const [brushSize, setBrushSize] = useState<number>(60);
+
+  // Камера и трансляция Игроков
+  const [playerViewport, setPlayerViewport] = useState<ViewportTransform>({ x: 0, y: 0, scale: 1 });
+  const [playerScreenSize, setPlayerScreenSize] = useState<{ width: number; height: number }>({
+    width: 1920,
+    height: 1080
+  });
+  const [isLinkedCamera, setIsLinkedCamera] = useState<boolean>(true);
+  const [isConnectedToPlayer, setIsConnectedToPlayer] = useState<boolean>(false);
+
+  const [tool, setTool] = useState<DMTool>('reveal');
+  const [brushRadius, setBrushRadius] = useState<number>(50);
+  const [brushShape, setBrushShape] = useState<'circle' | 'rect'>('circle');
+  const [fogStyle, setFogStyle] = useState<FogTextureStyle>('classic_black');
   const [masterFogOpacity, setMasterFogOpacity] = useState<number>(0.55);
-  const [grid, setGrid] = useState<GridConfig>({
-    enabled: false,
-    size: 50,
-    color: 'rgba(255, 255, 255, 0.25)',
-    opacity: 0.5,
-    offsetX: 0,
-    offsetY: 0
-  });
-  const [syncViewport, setSyncViewport] = useState<boolean>(true);
-  const [playerConnected, setPlayerConnected] = useState<boolean>(false);
+
+  // Сетка
+  const [grid, setGrid] = useState<GridConfig>(currentScene.grid);
+
+  // Тактические оверлеи
   const [pings, setPings] = useState<MapPing[]>([]);
-  const [isDragOver, setIsDragOver] = useState<boolean>(false);
-  const [popupBlockedWarning, setPopupBlockedWarning] = useState<boolean>(false);
+  const [laserPoints, setLaserPoints] = useState<LaserPoint[]>([]);
+  const [drawings, setDrawings] = useState<TacticalDrawing[]>([]);
+  const [activeDrawing, setActiveDrawing] = useState<TacticalDrawing | null>(null);
+  const [spellTemplate, setSpellTemplate] = useState<SpellTemplate | null>(null);
+  const [ruler, setRuler] = useState<RulerMeasurement | null>(null);
 
-  // Координаты курсора для HUD телеметрии
-  const [mouseCoords, setMouseCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  // Режим затемнения экрана игроков
+  const [blackoutTheme, setBlackoutTheme] = useState<BlackoutTheme>('none');
 
-  // Курсор кисти на холсте
-  const [cursorPos, setCursorPos] = useState<{ x: number; y: number; visible: boolean }>({
-    x: 0,
-    y: 0,
-    visible: false
+  // Боевой менеджер
+  const [combat, setCombat] = useState<CombatTrackerState>({
+    isActive: false,
+    round: 1,
+    currentTurnIndex: 0,
+    combatants: []
   });
+
+  // Аудио состояние
+  const [audioState, setAudioState] = useState<AudioEngineState>(audioEngine.getState());
+
+  // Состояния открытия панелей и модальных окон
+  const [isCombatOpen, setIsCombatOpen] = useState(false);
+  const [isAudioOpen, setIsAudioOpen] = useState(false);
+  const [isSRDOpen, setIsSRDOpen] = useState(false);
+  const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [isVaultModalOpen, setIsVaultModalOpen] = useState(false);
+  const [isDiceModalOpen, setIsDiceModalOpen] = useState(false);
+  const [isGeneratorStudioOpen, setIsGeneratorStudioOpen] = useState(false);
 
   // Ссылки на DOM и движок тумана
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fogEngineRef = useRef<FogEngine | null>(null);
 
-  // Мутабельные ссылки для быстрых событий мыши (без ре-рендеров)
-  const isInteractingRef = useRef<boolean>(false);
-  const interactionModeRef = useRef<'pan' | 'draw' | null>(null);
+  // Мутабельные ссылки для быстрых событий мыши
+  const isInteractingRef = useRef(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const lastPointRef = useRef<StrokePoint | null>(null);
   const strokeBufferRef = useRef<StrokePoint[]>([]);
-  const spacePressedRef = useRef<boolean>(false);
+  const lastLaserTimeRef = useRef<number>(0);
+  const isDraggingLayerRef = useRef(false);
+  const layerDragStartRef = useRef<{ x: number; y: number; layerX: number; layerY: number }>({
+    x: 0,
+    y: 0,
+    layerX: 0,
+    layerY: 0
+  });
 
-  // Инициализация FogEngine
+  // 1. Инициализация FogEngine и начальной карты
   useEffect(() => {
     const engine = new FogEngine();
     fogEngineRef.current = engine;
 
-    // Загрузка стартовой демонстрационной карты для мгновенного теста
-    const initDefaultMap = async () => {
+    const initMap = async () => {
       try {
-        const defaultSample = SAMPLE_MAPS[0];
-        const blob = await defaultSample.generateBlob();
-        const item = await mediaManager.loadFromBlob(blob, defaultSample.name, 'image', defaultSample.width, defaultSample.height);
-        setMedia(item);
-        engine.resize(item.width, item.height);
+        const sample = SAMPLE_MAPS[0];
+        const blob = await sample.generateBlob();
+        const dataUrl = await new Promise<string>((res) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result as string);
+          r.readAsDataURL(blob);
+        });
+
+        const initialLayer: MapLayer = {
+          id: `layer_${Date.now()}`,
+          name: sample.name,
+          url: dataUrl,
+          dataUrl,
+          x: 0,
+          y: 0,
+          width: sample.width,
+          height: sample.height,
+          opacity: 1,
+          visible: true,
+          zIndex: 1,
+          locked: true
+        };
+
+        setLayers([initialLayer]);
+        setSelectedLayerId(initialLayer.id);
+
+        engine.resize(sample.width, sample.height);
         renderFog();
-        fitToScreen(item.width, item.height);
+        fitToScreen(sample.width, sample.height);
+
+        // Сразу отправляем активную карту и маску игрокам
+        setTimeout(() => broadcastFullState(), 100);
       } catch (err) {
-        console.warn('Не удалось загрузить начальную карту:', err);
+        console.warn('Ошибка загрузки начальной карты:', err);
       }
     };
 
-    initDefaultMap();
+    initMap();
+
+    const unsubAudio = audioEngine.subscribe((s) => setAudioState(s));
 
     return () => {
       engine.destroy();
-      mediaManager.destroy();
+      unsubAudio();
     };
   }, []);
 
-  // Отрисовка маски тумана на экранном холсте мастера
+  // Отрисовка маски тумана на экранном Canvas
   const renderFog = useCallback(() => {
     if (!canvasRef.current || !fogEngineRef.current) return;
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
-    fogEngineRef.current.renderToCanvas(ctx, true, masterFogOpacity);
-  }, [masterFogOpacity]);
+    fogEngineRef.current.renderToCanvas(ctx, true, masterFogOpacity, fogStyle);
+  }, [masterFogOpacity, fogStyle]);
 
-  // Обновление отображения тумана при смене прозрачности
   useEffect(() => {
     renderFog();
-  }, [masterFogOpacity, renderFog]);
+  }, [masterFogOpacity, fogStyle, renderFog]);
 
-  // Синхронизация состояния сетки с проектором
+  // Синхронизация сетки
   useEffect(() => {
     syncService.send({ type: 'SYNC_GRID', grid });
   }, [grid]);
 
-  // Синхронизация зума/позиции при изменении
+  // Синхронизация позиции камеры и привязки
   useEffect(() => {
-    if (syncViewport) {
-      syncService.send({ type: 'SYNC_VIEWPORT', transform: viewport });
+    syncService.send({ type: 'SYNC_VIEWPORT', transform: viewport });
+    if (isLinkedCamera) {
+      setPlayerViewport(viewport);
+      syncService.send({ type: 'SET_PLAYER_VIEWPORT', transform: viewport });
     }
-  }, [viewport, syncViewport]);
+  }, [viewport, isLinkedCamera]);
 
-  // Полная синхронизация состояния с новым подключившимся окном игроков
+  // Синхронизация слоев карты
+  useEffect(() => {
+    syncService.send({ type: 'SYNC_LAYERS', layers });
+  }, [layers]);
+
+  // Синхронизация Blackout
+  useEffect(() => {
+    syncService.send({ type: 'SET_BLACKOUT', theme: blackoutTheme });
+  }, [blackoutTheme]);
+
+  // Синхронизация боя
+  useEffect(() => {
+    syncService.send({ type: 'SYNC_COMBAT', combat });
+  }, [combat]);
+
+  // Синхронизация тактических рисунков
+  useEffect(() => {
+    syncService.send({ type: 'SYNC_DRAWINGS', drawings });
+  }, [drawings]);
+
+  // Синхронизация шаблона заклинания
+  useEffect(() => {
+    syncService.send({ type: 'SYNC_SPELL_TEMPLATE', template: spellTemplate });
+  }, [spellTemplate]);
+
+  // Синхронизация линейки
+  useEffect(() => {
+    syncService.send({ type: 'SYNC_RULER', ruler });
+  }, [ruler]);
+
+  // Полная синхронизация при подключении окна проектора и обновление кэша
   const broadcastFullState = useCallback(() => {
     if (!fogEngineRef.current) return;
     const maskDataUrl = fogEngineRef.current.getMaskDataUrl();
 
-    const fullState: FullSyncedState = {
-      hasMedia: !!media,
-      mediaType: media ? media.type : null,
-      mimeType: media ? media.mimeType : null,
-      mediaWidth: media ? media.width : 1920,
-      mediaHeight: media ? media.height : 1080,
-      mediaName: media ? media.name : '',
+    const fullState = {
+      hasMedia: layers.length > 0,
+      mediaType: 'image' as const,
+      mimeType: 'image/png',
+      dataUrl: layers[0]?.dataUrl,
+      mediaWidth: layers[0]?.width || 1920,
+      mediaHeight: layers[0]?.height || 1080,
+      mediaName: currentScene.name,
       viewport,
+      playerViewport,
+      playerScreenSize,
       grid,
-      maskDataUrl
+      maskDataUrl,
+      layers,
+      blackoutTheme,
+      combat,
+      fogStyle
     };
 
-    syncService.send({ type: 'SYNC_FULL_STATE', state: fullState });
-  }, [media, viewport, grid]);
+    saveSyncedStateToCache(fullState);
 
-  // Обработка сообщений канала
+    syncService.send({ type: 'HANDSHAKE_RESPONSE', connected: true });
+    syncService.send({
+      type: 'SYNC_FULL_STATE',
+      state: fullState
+    });
+  }, [layers, currentScene, viewport, playerViewport, playerScreenSize, grid, blackoutTheme, combat, fogStyle]);
+
   useEffect(() => {
-    const unsubscribe = syncService.subscribe((message) => {
-      if (message.type === 'HANDSHAKE_REQUEST') {
-        setPlayerConnected(true);
-        // Отправляем текущее состояние
+    const unsub = syncService.subscribe((msg) => {
+      if (msg.type === 'HANDSHAKE_REQUEST' || msg.type === 'REQUEST_FULL_STATE') {
+        setIsConnectedToPlayer(true);
         broadcastFullState();
-        if (media && media.blob) {
-          syncService.send({
-            type: 'SET_MEDIA',
-            mediaType: media.type,
-            mimeType: media.mimeType,
-            blob: media.blob,
-            width: media.width,
-            height: media.height,
-            name: media.name
-          });
-        }
+      } else if (msg.type === 'PLAYER_WINDOW_RESIZED') {
+        setIsConnectedToPlayer(true);
+        setPlayerScreenSize({ width: msg.width, height: msg.height });
       }
     });
+    return () => unsub();
+  }, [broadcastFullState]);
 
-    return () => unsubscribe();
-  }, [broadcastFullState, media]);
+  // Изменение позиции вьюпорта игроков вручную или с рамки
+  const handleSetPlayerViewport = useCallback((newVp: ViewportTransform) => {
+    setPlayerViewport(newVp);
+    syncService.send({ type: 'SET_PLAYER_VIEWPORT', transform: newVp });
+  }, []);
+
+  // Вписать всю карту на экран игроков
+  const handleFitMapForPlayers = useCallback(() => {
+    const mapW = layers[0]?.width || 1920;
+    const mapH = layers[0]?.height || 1080;
+    const Wp = playerScreenSize.width || 1920;
+    const Hp = playerScreenSize.height || 1080;
+
+    const scaleX = Wp / mapW;
+    const scaleY = Hp / mapH;
+    const scale = Math.min(scaleX, scaleY);
+
+    const x = (Wp - mapW * scale) / 2;
+    const y = (Hp - mapH * scale) / 2;
+
+    const newVp = { x, y, scale };
+    setPlayerViewport(newVp);
+    syncService.send({ type: 'SET_PLAYER_VIEWPORT', transform: newVp });
+  }, [layers, playerScreenSize]);
+
+  // Переместить камеру Мастера к центру видимой рамки игроков
+  const handleCenterOnPlayerView = useCallback(() => {
+    if (!viewportRef.current) return;
+    const rect = viewportRef.current.getBoundingClientRect();
+    const Wp = playerScreenSize.width || 1920;
+    const Hp = playerScreenSize.height || 1080;
+    const sp = playerViewport.scale || 1;
+
+    const mapCenterX = -playerViewport.x / sp + (Wp / sp) / 2;
+    const mapCenterY = -playerViewport.y / sp + (Hp / sp) / 2;
+
+    const dmScale = viewport.scale || 1;
+    const newDmX = rect.width / 2 - mapCenterX * dmScale;
+    const newDmY = rect.height / 2 - mapCenterY * dmScale;
+
+    setViewport({ x: newDmX, y: newDmY, scale: dmScale });
+  }, [playerScreenSize, playerViewport, viewport]);
+
+  // Привязать вид игроков к текущему виду Мастера
+  const handleCenterPlayerOnDmView = useCallback(() => {
+    if (!viewportRef.current) return;
+    const rect = viewportRef.current.getBoundingClientRect();
+    const Wp = playerScreenSize.width || 1920;
+    const Hp = playerScreenSize.height || 1080;
+    const dmScale = viewport.scale || 1;
+
+    const mapCenterX = -viewport.x / dmScale + (rect.width / dmScale) / 2;
+    const mapCenterY = -viewport.y / dmScale + (rect.height / dmScale) / 2;
+
+    const sp = playerViewport.scale || dmScale;
+    const newPx = Wp / 2 - mapCenterX * sp;
+    const newPy = Hp / 2 - mapCenterY * sp;
+
+    const newVp = { x: newPx, y: newPy, scale: sp };
+    setPlayerViewport(newVp);
+    syncService.send({ type: 'SET_PLAYER_VIEWPORT', transform: newVp });
+  }, [viewport, playerScreenSize, playerViewport]);
 
   // Вписать карту в экран
   const fitToScreen = useCallback((w?: number, h?: number) => {
     if (!viewportRef.current) return;
     const rect = viewportRef.current.getBoundingClientRect();
-    const mapW = w || media?.width || 1920;
-    const mapH = h || media?.height || 1080;
+    const mapW = w || layers[0]?.width || 1920;
+    const mapH = h || layers[0]?.height || 1080;
 
     const scaleX = rect.width / mapW;
     const scaleY = rect.height / mapH;
-    const scale = Math.min(scaleX, scaleY) * 0.92;
+    const scale = Math.min(scaleX, scaleY) * 0.9;
 
     const x = (rect.width - mapW * scale) / 2;
     const y = (rect.height - mapH * scale) / 2;
 
     setViewport({ x, y, scale });
-  }, [media]);
-
-  // Сброс вида 1:1
-  const handleResetView = () => {
-    setViewport({ x: 0, y: 0, scale: 1 });
-  };
-
-  // Зум к центру экрана
-  const handleZoom = (factor: number) => {
-    if (!viewportRef.current) return;
-    const rect = viewportRef.current.getBoundingClientRect();
-    const cx = rect.width / 2;
-    const cy = rect.height / 2;
-
-    setViewport((prev) => {
-      const newScale = Math.min(Math.max(prev.scale * factor, 0.05), 6.0);
-      const newX = cx - (cx - prev.x) * (newScale / prev.scale);
-      const newY = cy - (cy - prev.y) * (newScale / prev.scale);
-      return { x: newX, y: newY, scale: newScale };
-    });
-  };
+  }, [layers]);
 
   // Преобразование координат мыши в пиксельные координаты карты
   const getMapCoordinates = (e: React.MouseEvent | MouseEvent): StrokePoint => {
@@ -217,485 +405,834 @@ export const DMView: React.FC = () => {
     };
   };
 
-  // Загрузка локального файла карты
-  const handleFileSelected = async (file: File) => {
-    try {
-      const item = await mediaManager.loadFromFile(file);
-      setMedia(item);
-
-      if (fogEngineRef.current && canvasRef.current) {
-        fogEngineRef.current.resize(item.width, item.height);
-        canvasRef.current.width = item.width;
-        canvasRef.current.height = item.height;
-        renderFog();
-      }
-
-      fitToScreen(item.width, item.height);
-
-      // Оповещаем окно проектора
-      syncService.send({
-        type: 'SET_MEDIA',
-        mediaType: item.type,
-        mimeType: item.mimeType,
-        blob: file,
-        width: item.width,
-        height: item.height,
-        name: item.name
-      });
-    } catch (err: any) {
-      alert(`Ошибка загрузки: ${err.message || err}`);
-    }
-  };
-
-  // Загрузка демо-шаблона
-  const handleLoadSampleMap = async (sample: SampleMapDefinition) => {
-    try {
-      const blob = await sample.generateBlob();
-      const item = await mediaManager.loadFromBlob(blob, sample.name, 'image', sample.width, sample.height);
-      setMedia(item);
-
-      if (fogEngineRef.current && canvasRef.current) {
-        fogEngineRef.current.resize(item.width, item.height);
-        canvasRef.current.width = item.width;
-        canvasRef.current.height = item.height;
-        renderFog();
-      }
-
-      fitToScreen(item.width, item.height);
-
-      syncService.send({
-        type: 'SET_MEDIA',
-        mediaType: 'image',
-        mimeType: 'image/jpeg',
-        blob,
-        width: item.width,
-        height: item.height,
-        name: item.name
-      });
-    } catch (err: any) {
-      alert(`Ошибка генерации шаблона: ${err.message || err}`);
-    }
-  };
-
-  // Действия с туманом: Скрыть всё / Открыть всё
-  const handleFillAllFog = () => {
-    if (!fogEngineRef.current) return;
-    fogEngineRef.current.fillAll();
-    renderFog();
-    syncService.send({ type: 'FOG_FILL_ALL' });
-  };
-
-  const handleClearAllFog = () => {
-    if (!fogEngineRef.current) return;
-    fogEngineRef.current.clearAll();
-    renderFog();
-    syncService.send({ type: 'FOG_CLEAR_ALL' });
-  };
-
-  // Открытие окна проектора
-  const handleOpenPlayerWindow = () => {
-    const playerUrl = `${window.location.origin}${window.location.pathname}?mode=player`;
-    const win = window.open(
-      playerUrl,
-      'dnd_player_projector_window',
-      'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no'
-    );
-
-    if (!win || win.closed || typeof win.closed === 'undefined') {
-      setPopupBlockedWarning(true);
-    } else {
-      setPopupBlockedWarning(false);
-      setPlayerConnected(true);
-      win.focus();
-    }
-  };
-
-  // Создание маркера (Ping)
-  const createPing = (pt: StrokePoint) => {
-    const newPing: MapPing = {
-      id: `ping_${Date.now()}`,
-      x: pt.x,
-      y: pt.y,
-      color: '#F27D26',
-      timestamp: Date.now()
-    };
-
-    setPings((prev) => [...prev, newPing]);
-    syncService.send({ type: 'PING_LOCATION', ping: newPing });
-
-    // Автоматическое удаление маркера через 3 секунды
-    setTimeout(() => {
-      setPings((prev) => prev.filter((p) => p.id !== newPing.id));
-    }, 3000);
-  };
-
-  // Обработка клавиатурных сокращений
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
-
-      if (e.code === 'Space') {
-        spacePressedRef.current = true;
-      } else if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') {
-        setTool('reveal');
-      } else if (e.key === 'h' || e.key === 'H' || e.key === 'р' || e.key === 'Р') {
-        setTool('hide');
-      } else if (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З') {
-        setTool('ping');
-      } else if (e.key === '[') {
-        setBrushSize((s) => Math.max(10, s - 10));
-      } else if (e.key === ']') {
-        setBrushSize((s) => Math.min(300, s + 10));
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        spacePressedRef.current = false;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-
-  // Обработка мыши: Панорамирование, Зум в точку курсора, Рисование тумана
+  // 2. ОБРАБОТЧИКИ СОБЫТИЙ МЫШИ НА ХОЛСТЕ
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 1 || e.button === 2 || tool === 'pan' || spacePressedRef.current) {
-      // Панорамирование
+    // Средняя кнопка мыши или пробел — всегда панорамирование
+    if (e.button === 1 || e.spaceKey || tool === 'pan') {
       isInteractingRef.current = true;
-      interactionModeRef.current = 'pan';
-      panStartRef.current = {
-        x: e.clientX - viewport.x,
-        y: e.clientY - viewport.y
-      };
+      panStartRef.current = { x: e.clientX - viewport.x, y: e.clientY - viewport.y };
       return;
     }
 
-    if (e.button === 0) {
-      const pt = getMapCoordinates(e);
+    if (e.button !== 0) return;
 
-      if (tool === 'ping') {
-        createPing(pt);
-        return;
-      }
+    const pt = getMapCoordinates(e);
 
-      if (tool === 'reveal' || tool === 'hide') {
-        isInteractingRef.current = true;
-        interactionModeRef.current = 'draw';
-        lastPointRef.current = pt;
-        strokeBufferRef.current = [pt];
-
-        if (fogEngineRef.current) {
-          fogEngineRef.current.applyStroke({
-            mode: tool,
-            radius: brushSize,
-            points: [pt]
-          });
-          renderFog();
+    // 1. Выделение и перемещение слоев
+    if (tool === 'select') {
+      if (selectedLayerId) {
+        const layer = layers.find((l) => l.id === selectedLayerId);
+        if (layer && !layer.locked) {
+          isDraggingLayerRef.current = true;
+          layerDragStartRef.current = {
+            x: pt.x,
+            y: pt.y,
+            layerX: layer.x,
+            layerY: layer.y
+          };
         }
+      }
+      return;
+    }
+
+    // 2. Пинг внимания
+    if (tool === 'ping') {
+      const newPing: MapPing = {
+        id: `ping_${Date.now()}`,
+        x: pt.x,
+        y: pt.y,
+        color: '#F27D26',
+        createdAt: Date.now()
+      };
+      setPings((prev) => [...prev, newPing]);
+      syncService.send({ type: 'ADD_PING', ping: newPing });
+      audioEngine.playSFX('dice');
+
+      setTimeout(() => {
+        setPings((prev) => prev.filter((p) => p.id !== newPing.id));
+      }, 4000);
+      return;
+    }
+
+    // 3. Линейка-дальномер
+    if (tool === 'ruler') {
+      isInteractingRef.current = true;
+      setRuler({
+        startX: pt.x,
+        startY: pt.y,
+        currentX: pt.x,
+        currentY: pt.y,
+        distanceFeet: 0,
+        distanceMeters: 0,
+        distanceCells: 0,
+        mode: '5e_euclidean'
+      });
+      return;
+    }
+
+    // 4. Шаблоны заклинаний (Spell AoE)
+    if (tool === 'spell_template') {
+      if (!spellTemplate) {
+        setSpellTemplate({
+          shape: 'sphere',
+          sizeFeet: 20,
+          originX: pt.x,
+          originY: pt.y,
+          angleDeg: 0,
+          color: 'rgba(242, 125, 38, 0.4)'
+        });
+      } else {
+        setSpellTemplate({
+          ...spellTemplate,
+          originX: pt.x,
+          originY: pt.y
+        });
+      }
+      return;
+    }
+
+    // 5. Тактическое рисование
+    if (tool === 'draw') {
+      isInteractingRef.current = true;
+      const newDrawing: TacticalDrawing = {
+        id: `draw_${Date.now()}`,
+        type: 'freehand',
+        color: '#F27D26',
+        width: 4,
+        points: [pt],
+        opacity: 0.9
+      };
+      setActiveDrawing(newDrawing);
+      return;
+    }
+
+    // 6. Туман войны (Reveal / Hide)
+    if (tool === 'reveal' || tool === 'hide') {
+      isInteractingRef.current = true;
+      strokeBufferRef.current = [pt];
+
+      if (fogEngineRef.current) {
+        fogEngineRef.current.applyStroke({
+          mode: tool,
+          shape: brushShape,
+          radius: brushRadius,
+          points: [pt]
+        });
+        renderFog();
       }
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    const coords = getMapCoordinates(e);
-    setMouseCoords({ x: Math.round(coords.x), y: Math.round(coords.y) });
+    const pt = getMapCoordinates(e);
 
-    // Обновляем координаты плавающего индикатора кисти
-    if (tool === 'reveal' || tool === 'hide') {
-      const rect = viewportRef.current?.getBoundingClientRect();
-      if (rect) {
-        setCursorPos({
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-          visible: true
-        });
-      }
-    } else {
-      setCursorPos((prev) => ({ ...prev, visible: false }));
-    }
-
-    if (!isInteractingRef.current) return;
-
-    if (interactionModeRef.current === 'pan') {
-      const newX = e.clientX - panStartRef.current.x;
-      const newY = e.clientY - panStartRef.current.y;
-      setViewport((prev) => ({ ...prev, x: newX, y: newY }));
+    // Панорамирование
+    if (isInteractingRef.current && (tool === 'pan' || e.buttons === 4)) {
+      setViewport((prev) => ({
+        ...prev,
+        x: e.clientX - panStartRef.current.x,
+        y: e.clientY - panStartRef.current.y
+      }));
       return;
     }
 
-    if (interactionModeRef.current === 'draw' && (tool === 'reveal' || tool === 'hide')) {
-      const pt = coords;
-      if (lastPointRef.current && fogEngineRef.current) {
-        // Отрисовываем сегмент
-        fogEngineRef.current.applyStroke({
-          mode: tool,
-          radius: brushSize,
-          points: [lastPointRef.current, pt]
-        });
-        renderFog();
+    // Перемещение слоя
+    if (isDraggingLayerRef.current && selectedLayerId) {
+      let nextX = layerDragStartRef.current.layerX + (pt.x - layerDragStartRef.current.x);
+      let nextY = layerDragStartRef.current.layerY + (pt.y - layerDragStartRef.current.y);
 
-        strokeBufferRef.current.push(pt);
-        lastPointRef.current = pt;
-
-        // Передаем порцию точек по каналу синхронизации
-        if (strokeBufferRef.current.length >= 4) {
-          syncService.send({
-            type: 'FOG_STROKE',
-            stroke: {
-              mode: tool,
-              radius: brushSize,
-              points: [...strokeBufferRef.current]
-            }
-          });
-          strokeBufferRef.current = [pt];
-        }
+      // Snap-to-Grid при включенной сетке
+      if (grid.enabled && grid.snapToGrid && grid.size > 0) {
+        const offX = grid.offsetX || 0;
+        const offY = grid.offsetY || 0;
+        nextX = Math.round((nextX - offX) / grid.size) * grid.size + offX;
+        nextY = Math.round((nextY - offY) / grid.size) * grid.size + offY;
       }
+
+      setLayers((prev) =>
+        prev.map((l) =>
+          l.id === selectedLayerId
+            ? { ...l, x: nextX, y: nextY }
+            : l
+        )
+      );
+      return;
+    }
+
+    // Лазерная указка
+    if (tool === 'laser') {
+      const now = Date.now();
+      if (now - lastLaserTimeRef.current > 20) {
+        lastLaserTimeRef.current = now;
+        const newPoint: LaserPoint = { x: pt.x, y: pt.y, timestamp: now };
+        setLaserPoints((prev) => [...prev.slice(-35), newPoint]);
+        syncService.send({ type: 'LASER_STREAM', point: newPoint });
+      }
+      return;
+    }
+
+    // Линейка
+    if (isInteractingRef.current && tool === 'ruler' && ruler) {
+      const dx = pt.x - ruler.startX;
+      const dy = pt.y - ruler.startY;
+      const distPx = Math.sqrt(dx * dx + dy * dy);
+      const cells = distPx / (grid.size || 50);
+      const feet = cells * 5;
+
+      setRuler({
+        ...ruler,
+        currentX: pt.x,
+        currentY: pt.y,
+        distanceFeet: feet,
+        distanceMeters: feet * 0.3,
+        distanceCells: cells
+      });
+      return;
+    }
+
+    // Вращение / перемещение шаблона заклинания
+    if (tool === 'spell_template' && spellTemplate) {
+      const dx = pt.x - spellTemplate.originX;
+      const dy = pt.y - spellTemplate.originY;
+      const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+      setSpellTemplate({
+        ...spellTemplate,
+        angleDeg
+      });
+      return;
+    }
+
+    // Рисование
+    if (isInteractingRef.current && tool === 'draw' && activeDrawing) {
+      setActiveDrawing({
+        ...activeDrawing,
+        points: [...activeDrawing.points, pt]
+      });
+      return;
+    }
+
+    // Туман войны
+    if (isInteractingRef.current && (tool === 'reveal' || tool === 'hide') && fogEngineRef.current) {
+      strokeBufferRef.current.push(pt);
+      fogEngineRef.current.applyStroke({
+        mode: tool,
+        shape: brushShape,
+        radius: brushRadius,
+        points: [pt]
+      });
+      renderFog();
     }
   };
 
   const handleMouseUp = () => {
-    if (interactionModeRef.current === 'draw' && strokeBufferRef.current.length > 0) {
-      syncService.send({
-        type: 'FOG_STROKE',
-        stroke: {
-          mode: tool,
-          radius: brushSize,
-          points: [...strokeBufferRef.current]
-        }
-      });
-      strokeBufferRef.current = [];
+    if (isDraggingLayerRef.current) {
+      isDraggingLayerRef.current = false;
     }
 
-    isInteractingRef.current = false;
-    interactionModeRef.current = null;
-    lastPointRef.current = null;
+    if (isInteractingRef.current) {
+      isInteractingRef.current = false;
+
+      // Завершение штриха тумана войны -> синхронизация с проектором
+      if ((tool === 'reveal' || tool === 'hide') && strokeBufferRef.current.length > 0) {
+        syncService.send({
+          type: 'DRAW_STROKE',
+          payload: {
+            mode: tool,
+            shape: brushShape,
+            radius: brushRadius,
+            points: strokeBufferRef.current
+          }
+        });
+        strokeBufferRef.current = [];
+      }
+
+      // Сохранение рисунка
+      if (tool === 'draw' && activeDrawing) {
+        setDrawings((prev) => [...prev, activeDrawing]);
+        setActiveDrawing(null);
+      }
+    }
   };
 
-  // Зум колесиком мыши с привязкой к точке под курсором
+  // Зум колесиком мыши к курсору
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     if (!viewportRef.current) return;
+
     const rect = viewportRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const cursorX = e.clientX - rect.left;
+    const cursorY = e.clientY - rect.top;
 
-    const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
-    setViewport((prev) => {
-      const newScale = Math.min(Math.max(prev.scale * zoomFactor, 0.05), 6.0);
-      const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
-      const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
-      return { x: newX, y: newY, scale: newScale };
-    });
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+    const newScale = Math.min(Math.max(viewport.scale * zoomFactor, 0.05), 6.0);
+
+    const newX = cursorX - (cursorX - viewport.x) * (newScale / viewport.scale);
+    const newY = cursorY - (cursorY - viewport.y) * (newScale / viewport.scale);
+
+    setViewport({ x: newX, y: newY, scale: newScale });
   };
 
-  // Drag-and-Drop файлов прямо на рабочую область
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
+  // 3. ДЕЙСТВИЯ С ТУМАНОМ ВОЙНЫ
+  const handleRevealAllFog = () => {
+    if (!fogEngineRef.current) return;
+    fogEngineRef.current.clearAll();
+    renderFog();
+    syncService.send({ type: 'CLEAR_FOG' });
   };
 
-  const handleDragLeave = () => {
-    setIsDragOver(false);
+  const handleHideAllFog = () => {
+    if (!fogEngineRef.current) return;
+    fogEngineRef.current.fillAll();
+    renderFog();
+    syncService.send({ type: 'FILL_FOG' });
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileSelected(e.dataTransfer.files[0]);
+  const handleInvertFog = () => {
+    if (!fogEngineRef.current) return;
+    fogEngineRef.current.invert();
+    renderFog();
+    syncService.send({ type: 'INVERT_FOG' });
+  };
+
+  // 4. СЛОИ КАРТЫ
+  const handleAddImageLayer = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const newLayer: MapLayer = {
+          id: `layer_${Date.now()}`,
+          name: file.name.replace(/\.[^/.]+$/, ''),
+          url: dataUrl,
+          dataUrl,
+          x: 0,
+          y: 0,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+          opacity: 1,
+          visible: true,
+          zIndex: layers.length + 1,
+          locked: false
+        };
+
+        setLayers((prev) => [...prev, newLayer]);
+        setSelectedLayerId(newLayer.id);
+
+        if (layers.length === 0 && fogEngineRef.current && canvasRef.current) {
+          fogEngineRef.current.resize(img.naturalWidth, img.naturalHeight);
+          canvasRef.current.width = img.naturalWidth;
+          canvasRef.current.height = img.naturalHeight;
+          renderFog();
+          fitToScreen(img.naturalWidth, img.naturalHeight);
+        }
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLayer = (id: string) => {
+    setLayers((prev) => prev.filter((l) => l.id !== id));
+    if (selectedLayerId === id) setSelectedLayerId(null);
+  };
+
+  const handleToggleLayerLock = (id: string) => {
+    setLayers((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, locked: !l.locked } : l))
+    );
+  };
+
+  const handleToggleLayerVisibility = (id: string) => {
+    setLayers((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l))
+    );
+  };
+
+  // 5. УПРАВЛЕНИЕ СЦЕНАМИ КАМПАНИИ
+  const handleSwitchScene = (scene: Scene) => {
+    setCurrentScene(scene);
+    setLayers(scene.layers || []);
+    setGrid(scene.grid || { enabled: false, size: 50, color: 'rgba(255,255,255,0.3)', opacity: 0.5, type: 'square' });
+    setDrawings(scene.drawings || []);
+
+    // Кинематографичный переход для игроков
+    syncService.send({ type: 'SWITCH_SCENE_CINEMATIC', sceneName: scene.name });
+
+    if (scene.layers && scene.layers.length > 0 && fogEngineRef.current && canvasRef.current) {
+      const baseL = scene.layers[0];
+      fogEngineRef.current.resize(baseL.width, baseL.height);
+      if (scene.maskDataUrl) {
+        fogEngineRef.current.loadFromDataUrl(scene.maskDataUrl).then(() => {
+          renderFog();
+        });
+      } else {
+        fogEngineRef.current.clearAll();
+        renderFog();
+      }
+      canvasRef.current.width = baseL.width;
+      canvasRef.current.height = baseL.height;
+      fitToScreen(baseL.width, baseL.height);
     }
   };
 
-  const mediaWidth = media?.width || 1920;
-  const mediaHeight = media?.height || 1080;
+  const handleAddNewScene = (newScene?: Scene) => {
+    const sceneToUse =
+      newScene ||
+      {
+        id: `scene_${Date.now()}`,
+        name: `Scene #${allScenes.length + 1}`,
+        grid: {
+          enabled: true,
+          size: 60,
+          color: 'rgba(255, 255, 255, 0.25)',
+          opacity: 0.5,
+          type: 'square',
+          offsetX: 0,
+          offsetY: 0
+        },
+        layers: [],
+        drawings: [],
+        portals: []
+      };
+
+    setAllScenes((prev) => [...prev, sceneToUse]);
+    handleSwitchScene(sceneToUse);
+  };
+
+  // 6. ОТКРЫТИЕ ОКНА ПРОЕКТОРА
+  const handleOpenPlayerWindow = () => {
+    const url = `${window.location.origin}${window.location.pathname}?mode=player`;
+    const newWin = window.open(url, '_blank');
+    if (!newWin) {
+      alert('Всплывающее окно заблокировано браузером. Разрешите всплывающие окна для работы со вторым экраном.');
+    }
+  };
+
+  // 7. СВЯЗКА СРД С БОЕВЫМ ТРЕКЕРОМ И ШАБЛОНАМИ
+  const handleAddMonsterFromSRD = (monster: SRDMonster) => {
+    const dexMod = Math.floor((monster.stats.dex - 10) / 2);
+    const initRoll = Math.floor(Math.random() * 20) + 1 + dexMod;
+
+    const newCombatant = {
+      id: `comb_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      name: monster.name,
+      type: 'monster' as const,
+      initiative: initRoll,
+      dexModifier: dexMod,
+      hpCurrent: monster.hp,
+      hpMax: monster.hp,
+      tempHp: 0,
+      ac: monster.ac,
+      speed: parseInt(monster.speed, 10) || 30,
+      passivePerception: 10 + Math.floor((monster.stats.wis - 10) / 2),
+      conditions: []
+    };
+
+    setCombat((prev) => ({
+      ...prev,
+      combatants: [...prev.combatants, newCombatant]
+    }));
+
+    setIsCombatOpen(true);
+    audioEngine.playSFX('roar');
+  };
+
+  const handleApplySpellTemplateFromSRD = (spell: SRDSpell) => {
+    setTool('spell_template');
+    const shape = spell.aoe?.includes('cone')
+      ? 'cone'
+      : spell.aoe?.includes('line')
+      ? 'line'
+      : spell.aoe?.includes('cube')
+      ? 'cube'
+      : 'sphere';
+
+    setSpellTemplate({
+      shape,
+      sizeFeet: 20,
+      originX: layers[0]?.width ? layers[0].width / 2 : 500,
+      originY: layers[0]?.height ? layers[0].height / 2 : 500,
+      angleDeg: 0,
+      color: 'rgba(242, 125, 38, 0.4)'
+    });
+    audioEngine.playSFX('fireball');
+  };
+
+  const handleBroadcastReadAloud = (title: string, text: string) => {
+    syncService.send({ type: 'READ_ALOUD', title, text });
+    audioEngine.playSFX('victory');
+  };
+
+  const handleBroadcastDiceRoll = (roll: DiceRollResult) => {
+    syncService.send({ type: 'DICE_ROLL', roll });
+  };
+
+  const handleBroadcastHandoutCard = (card: HandoutCardPayload) => {
+    syncService.send({ type: 'SHOW_HANDOUT_CARD', card });
+    audioEngine.playSFX('lightning');
+  };
+
+  const handleAddGeneratedMonsterToCombat = (monster: Partial<Combatant>) => {
+    const newCombatant: Combatant = {
+      id: `combat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: monster.name || 'Сгенерированный Монстр',
+      type: monster.type || 'monster',
+      initiative: Math.floor(Math.random() * 20) + 1,
+      dexModifier: monster.dexModifier || 0,
+      hpCurrent: monster.hpCurrent || 30,
+      hpMax: monster.hpMax || monster.hpCurrent || 30,
+      tempHp: 0,
+      ac: monster.ac || 14,
+      speed: monster.speed || 30,
+      passivePerception: monster.passivePerception || 12,
+      conditions: []
+    };
+
+    setCombat((prev) => ({
+      ...prev,
+      combatants: [...prev.combatants, newCombatant]
+    }));
+
+    setIsCombatOpen(true);
+    audioEngine.playSFX('roar');
+  };
+
+  const firstLayer = layers[0];
+  const mapWidth = firstLayer?.width || 1920;
+  const mapHeight = firstLayer?.height || 1080;
 
   return (
-    <div className="flex flex-col w-screen h-screen bg-[#0A0A0A] text-[#E0E0E0] overflow-hidden select-none font-sans">
-      {/* Верхняя панель управления мастера */}
-      <DMToolbar
-        tool={tool}
-        onSelectTool={setTool}
-        brushSize={brushSize}
-        onChangeBrushSize={setBrushSize}
-        masterFogOpacity={masterFogOpacity}
-        onChangeMasterFogOpacity={setMasterFogOpacity}
-        grid={grid}
-        onChangeGrid={setGrid}
-        onFillAllFog={handleFillAllFog}
-        onClearAllFog={handleClearAllFog}
-        onResetView={handleResetView}
-        onFitToScreen={() => fitToScreen()}
-        onZoomIn={() => handleZoom(1.2)}
-        onZoomOut={() => handleZoom(0.83)}
-        zoomPercent={Math.round(viewport.scale * 100)}
-        syncViewport={syncViewport}
-        onToggleSyncViewport={setSyncViewport}
-        playerConnected={playerConnected}
+    <div className="w-screen h-screen bg-[#0A0A0A] overflow-hidden flex flex-col select-none relative font-mono text-[#E0E0E0]">
+      {/* 1. ВЕРХНЯЯ ПАНЕЛЬ МАСТЕРА */}
+      <DMHeader
+        currentScene={currentScene}
+        allScenes={allScenes}
+        onSwitchScene={handleSwitchScene}
+        onAddNewScene={() => handleAddNewScene()}
+        blackoutTheme={blackoutTheme}
+        onSetBlackout={setBlackoutTheme}
         onOpenPlayerWindow={handleOpenPlayerWindow}
-        onFileSelected={handleFileSelected}
-        onLoadSampleMap={handleLoadSampleMap}
-        mediaName={media?.name || ''}
+        combat={combat}
+        onToggleCombat={() => setIsCombatOpen(!isCombatOpen)}
+        isCombatOpen={isCombatOpen}
+        onToggleAudio={() => setIsAudioOpen(!isAudioOpen)}
+        isAudioOpen={isAudioOpen}
+        onToggleSRD={() => setIsSRDOpen(!isSRDOpen)}
+        isSRDOpen={isSRDOpen}
+        onToggleNotes={() => setIsNotesOpen(!isNotesOpen)}
+        isNotesOpen={isNotesOpen}
+        onOpenVaultModal={() => setIsVaultModalOpen(true)}
+        onOpenDiceModal={() => setIsDiceModalOpen(true)}
+        onOpenGeneratorStudio={() => setIsGeneratorStudioOpen(true)}
+        audioState={audioState}
       />
 
-      {/* Предупреждение о блокировке всплывающих окон */}
-      {popupBlockedWarning && (
-        <div className="bg-[#2A1810] text-[#F27D26] px-4 py-2 text-xs flex items-center justify-between border-b border-[#F27D26]/40 z-40 font-mono">
-          <span>
-            ⚠️ <strong>POPUP BLOCKED:</strong> Please allow popups for this origin or open manually:
-            <code className="ml-2 bg-black px-2 py-0.5 rounded text-[#E0E0E0] select-all border border-[#2A2A2A]">
-              {window.location.origin}?mode=player
-            </code>
-          </span>
-          <button
-            onClick={() => setPopupBlockedWarning(false)}
-            className="px-2 py-0.5 bg-[#F27D26] hover:bg-[#E06C15] text-black rounded font-bold uppercase text-[10px]"
-          >
-            DISMISS
-          </button>
-        </div>
-      )}
+      {/* 2. БОКОВАЯ ПАНЕЛЬ ИНСТРУМЕНТОВ (PHOTOSHOP-STYLE TOOLBAR) */}
+      <DMToolbar
+        currentTool={tool}
+        onSelectTool={setTool}
+        brushRadius={brushRadius}
+        onBrushRadiusChange={setBrushRadius}
+        brushShape={brushShape}
+        onBrushShapeChange={setBrushShape}
+        fogStyle={fogStyle}
+        onFogStyleChange={setFogStyle}
+        onRevealAllFog={handleRevealAllFog}
+        onHideAllFog={handleHideAllFog}
+        onInvertFog={handleInvertFog}
+        grid={grid}
+        onUpdateGrid={(g) => setGrid({ ...grid, ...g })}
+        layers={layers}
+        selectedLayerId={selectedLayerId}
+        onSelectLayer={setSelectedLayerId}
+        onAddLayer={handleAddImageLayer}
+        onRemoveLayer={handleRemoveLayer}
+        onToggleLayerLock={handleToggleLayerLock}
+        onToggleLayerVisibility={handleToggleLayerVisibility}
+        spellTemplate={spellTemplate}
+        onUpdateSpellTemplate={(t) => setSpellTemplate(spellTemplate ? { ...spellTemplate, ...t } : null)}
+        onClearDrawings={() => setDrawings([])}
+      />
 
-      {/* Основная рабочая область (Viewport) с матричным фоном */}
+      {/* 3. ОСНОВНОЙ ВЬЮПОРТ ХОЛСТА (CANVAS STAGE) */}
       <main
         ref={viewportRef}
-        id="dm-viewport"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onContextMenu={(e) => e.preventDefault()}
-        className={`relative flex-1 overflow-hidden bg-[#0D0D0F] bg-[radial-gradient(#1A1A1A_1px,transparent_1px)] bg-[size:24px_24px] ${
-          tool === 'pan' || spacePressedRef.current ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
+        className={`flex-1 relative overflow-hidden bg-[#0A0A0A] ${
+          tool === 'pan' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
         }`}
       >
-        {/* Контейнер трансформируемой карты с аппаратным ускорением */}
+        {/* Контейнер трансформации (Панорамирование & Зум с GPU-ускорением) */}
         <div
-          id="map-transform-container"
+          className="absolute top-0 left-0 origin-top-left will-change-transform"
           style={{
-            transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`,
-            transformOrigin: '0 0',
-            width: `${mediaWidth}px`,
-            height: `${mediaHeight}px`
+            transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0px) scale(${viewport.scale})`,
+            width: `${mapWidth}px`,
+            height: `${mapHeight}px`
           }}
-          className="absolute top-0 left-0 will-change-transform select-none shadow-2xl border border-[#2A2A2A]"
         >
-          {/* Слой фонового медиа (изображение или зацикленное видео) */}
-          {media?.type === 'video' ? (
-            <video
-              src={media.url}
-              autoPlay
-              loop
-              muted
-              playsInline
-              className="block pointer-events-none select-none max-w-none"
-              style={{ width: `${mediaWidth}px`, height: `${mediaHeight}px` }}
-            />
-          ) : media?.type === 'image' ? (
-            <img
-              src={media.url}
-              alt={media.name}
-              className="block pointer-events-none select-none max-w-none"
-              style={{ width: `${mediaWidth}px`, height: `${mediaHeight}px` }}
-            />
-          ) : (
-            <div
-              className="bg-[#151619] border border-[#2A2A2A] flex items-center justify-center text-[#8E9299] font-mono text-sm"
-              style={{ width: `${mediaWidth}px`, height: `${mediaHeight}px` }}
-            >
-              INITIALIZING MAP BUFFER...
-            </div>
-          )}
+          {/* А. Слои карты */}
+          {layers.map((layer) => {
+            if (!layer.visible) return null;
+            const isSelected = selectedLayerId === layer.id;
+            const isVideo =
+              layer.type === 'video' ||
+              layer.url?.startsWith('data:video') ||
+              layer.url?.endsWith('.mp4') ||
+              layer.url?.endsWith('.webm');
 
-          {/* Слой Тумана Войны (Canvas) */}
+            return (
+              <div
+                key={layer.id}
+                className={`absolute ${isSelected ? 'ring-2 ring-[#F27D26]' : ''}`}
+                style={{
+                  left: `${layer.x}px`,
+                  top: `${layer.y}px`,
+                  width: `${layer.width}px`,
+                  height: `${layer.height}px`,
+                  opacity: layer.opacity,
+                  zIndex: layer.zIndex
+                }}
+              >
+                {isVideo ? (
+                  <video
+                    src={layer.dataUrl || layer.url}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="w-full h-full object-fill pointer-events-none"
+                  />
+                ) : (
+                  <img
+                    src={layer.dataUrl || layer.url}
+                    alt={layer.name}
+                    className="w-full h-full object-fill pointer-events-none"
+                    draggable={false}
+                  />
+                )}
+
+                {layer.category === 'gm_only' && (
+                  <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-red-950/80 border border-red-500 text-[10px] text-red-200 font-mono font-bold tracking-wider pointer-events-none z-30">
+                    GM ONLY (HIDDEN FROM PLAYERS)
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Б. Тактическая сетка (Square / Hex) */}
+          <GridOverlay grid={grid} width={mapWidth} height={mapHeight} />
+
+          {/* В. Интерактивные порталы перехода локаций (Submap Portals) */}
+          {currentScene.portals &&
+            currentScene.portals.map((portal) => {
+              const px = portal.x ?? 100;
+              const py = portal.y ?? 100;
+              const targetScene = allScenes.find((s) => s.id === portal.targetSceneId);
+
+              return (
+                <div
+                  key={portal.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (targetScene) handleSwitchScene(targetScene);
+                  }}
+                  className="absolute z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#151619]/95 border border-[#F27D26] text-white shadow-xl cursor-pointer hover:scale-110 active:scale-95 transition-transform"
+                  style={{ left: `${px}px`, top: `${py}px` }}
+                  title={`Перейти на сцену: ${targetScene ? targetScene.name : 'Не указана'}`}
+                >
+                  <span className="text-sm">🚪</span>
+                  <span className="text-xs font-bold text-[#F27D26]">{portal.name}</span>
+                </div>
+              );
+            })}
+
+          {/* Г. Холст Тумана Войны */}
           <canvas
             ref={canvasRef}
-            id="fog-canvas-layer"
-            width={mediaWidth}
-            height={mediaHeight}
-            className="absolute top-0 left-0 pointer-events-none"
+            width={mapWidth}
+            height={mapHeight}
+            className="absolute top-0 left-0 pointer-events-none z-20"
           />
 
-          {/* Слой тактической координатной сетки */}
-          <GridOverlay grid={grid} width={mediaWidth} height={mediaHeight} />
+          {/* Д. Оверлей тактического рисования, заклинаний и линейки */}
+          <TacticalDrawingOverlay
+            width={mapWidth}
+            height={mapHeight}
+            drawings={drawings}
+            activeDrawing={activeDrawing}
+            spellTemplate={spellTemplate}
+            ruler={ruler}
+            gridSize={grid.size}
+          />
 
-          {/* Слой анимированных маркеров мастера */}
-          <PingOverlay pings={pings} />
+          {/* Е. Маркеры внимания и лазерная указка */}
+          <PingOverlay pings={pings} laserPoints={laserPoints} />
+
+          {/* Ж. РАМКА ВЬЮПОРТА ИГРОКОВ (PLAYER VIEWPORT FRAME OVERLAY) */}
+          <PlayerViewportFrameOverlay
+            playerViewport={playerViewport}
+            dmViewport={viewport}
+            playerScreenSize={playerScreenSize}
+            isLinkedCamera={isLinkedCamera}
+            isConnected={isConnectedToPlayer}
+            mapWidth={mapWidth}
+            mapHeight={mapHeight}
+            onToggleLinkCamera={() => setIsLinkedCamera(!isLinkedCamera)}
+            onSetPlayerViewport={handleSetPlayerViewport}
+            onCenterOnPlayerView={handleCenterOnPlayerView}
+            onCenterPlayerOnDmView={handleCenterPlayerOnDmView}
+            onFitMapForPlayers={handleFitMapForPlayers}
+          />
         </div>
 
-        {/* Индикатор телеметрии координат HUD в правом нижнем углу */}
-        <div className="absolute bottom-3 right-3 bg-[#0A0A0A]/90 backdrop-blur px-3 py-1 rounded border border-[#2A2A2A] font-mono text-[10px] text-[#8E9299] flex items-center gap-3 pointer-events-none z-20">
-          <span>
-            X: <strong className="text-[#E0E0E0]">{mouseCoords.x}</strong> Y: <strong className="text-[#E0E0E0]">{mouseCoords.y}</strong>
-          </span>
-          <span className="text-[#2A2A2A]">|</span>
-          <span>
-            Z: <strong className="text-[#F27D26]">{viewport.scale.toFixed(2)}x</strong>
-          </span>
-        </div>
-
-        {/* Визуальный индикатор радиуса кисти под курсором мастера */}
-        {cursorPos.visible && (tool === 'reveal' || tool === 'hide') && (
-          <div
-            className="fixed rounded-full pointer-events-none -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-transform duration-75"
-            style={{
-              left: `${cursorPos.x + (viewportRef.current?.getBoundingClientRect().left || 0)}px`,
-              top: `${cursorPos.y + (viewportRef.current?.getBoundingClientRect().top || 0)}px`,
-              width: `${brushSize * 2 * viewport.scale}px`,
-              height: `${brushSize * 2 * viewport.scale}px`,
-              border: `2px dashed ${tool === 'reveal' ? '#F27D26' : '#EF4444'}`,
-              backgroundColor: tool === 'reveal' ? 'rgba(242, 125, 38, 0.12)' : 'rgba(239, 68, 68, 0.12)'
-            }}
-          >
-            <span className="text-[9px] font-mono text-[#F27D26] bg-[#0A0A0A]/90 px-1.5 py-0.5 rounded border border-[#2A2A2A]">
-              {brushSize}px
+        {/* ПАНЕЛЬ БЫСТРОГО УПРАВЛЕНИЯ ЭКРАНОМ ИГРОКОВ (PLAYER VIEWPORT QUICK BAR) */}
+        <div className="absolute top-4 right-4 z-40 flex items-center gap-2 bg-[#151619]/90 backdrop-blur-md border border-[#2A2B30] p-1.5 rounded-xl shadow-2xl font-mono text-xs">
+          <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#0B0C0E] border border-[#22242A]">
+            <span className={`w-2 h-2 rounded-full ${isConnectedToPlayer ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+            <Tv size={14} className="text-[#F27D26]" />
+            <span className="font-bold text-white text-[11px]">
+              {isConnectedToPlayer ? `ИГРОКИ [${playerScreenSize.width}x${playerScreenSize.height}]` : 'ЭКРАН ИГРОКОВ'}
             </span>
           </div>
-        )}
 
-        {/* Оверлей при Drag-and-Drop файлов */}
-        {isDragOver && (
-          <div className="absolute inset-0 bg-[#0A0A0A]/90 border-4 border-dashed border-[#F27D26] flex items-center justify-center z-50 pointer-events-none">
-            <div className="text-center text-[#E0E0E0] font-mono">
-              <div className="text-5xl mb-3 text-[#F27D26]">🗺️</div>
-              <div className="text-xl font-bold uppercase tracking-wider">DROP FILE TO LOAD MAP BUFFER</div>
-              <div className="text-xs text-[#8E9299] mt-2">JPG, PNG, WebP, GIF, MP4, WebM (Hardware Accelerated)</div>
-            </div>
-          </div>
-        )}
+          <button
+            onClick={() => setIsLinkedCamera(!isLinkedCamera)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold transition active:scale-95 ${
+              isLinkedCamera
+                ? 'bg-[#F27D26] text-white shadow-md'
+                : 'bg-[#1F2024] text-[#A0A5B1] hover:text-white hover:bg-[#2A2B30]'
+            }`}
+            title={isLinkedCamera ? 'Камера игроков привязана к виду Мастера' : 'Камера игроков автономна'}
+          >
+            {isLinkedCamera ? <Lock size={13} /> : <Unlock size={13} />}
+            <span>{isLinkedCamera ? 'СВЯЗЬ ВКЛ' : 'АВТОНОМНО'}</span>
+          </button>
+
+          <button
+            onClick={handleCenterPlayerOnDmView}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1F2024] hover:bg-[#2A2B30] text-[#D0D4DC] hover:text-white transition active:scale-95"
+            title="Отправить текущий вид Мастера Игрокам"
+          >
+            <Crosshair size={13} className="text-[#F27D26]" />
+            <span>Мой вид -&gt; Игрокам</span>
+          </button>
+
+          <button
+            onClick={handleCenterOnPlayerView}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1F2024] hover:bg-[#2A2B30] text-[#D0D4DC] hover:text-white transition active:scale-95"
+            title="Переместить камеру Мастера к рамке Игроков"
+          >
+            <Tv size={13} className="text-[#38BDF8]" />
+            <span>Найти рамку</span>
+          </button>
+
+          <button
+            onClick={handleFitMapForPlayers}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1F2024] hover:bg-[#2A2B30] text-[#D0D4DC] hover:text-white transition active:scale-95"
+            title="Масштабировать карту ровно под весь экран игроков"
+          >
+            <Maximize2 size={13} className="text-emerald-400" />
+            <span>Вписать карту</span>
+          </button>
+        </div>
       </main>
 
-      {/* Нижняя панель телеметрии и монитора ресурсов */}
-      <footer className="h-7 bg-[#151619] border-t border-[#2A2A2A] px-4 flex items-center justify-between text-[10px] text-[#8E9299] font-mono shrink-0 select-none">
-        <div className="flex items-center gap-3 truncate">
-          <span className="text-[#E0E0E0] truncate">
-            LOADED: {media?.name ? media.name.toUpperCase() : 'DEFAULT_MAP.JPG'} ({mediaWidth}x{mediaHeight})
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span>BROADCAST_CHANNEL:</span>
-            <span className={playerConnected ? 'text-[#00FF00] font-bold' : 'text-[#8E9299]'}>
-              {playerConnected ? 'CONNECTED' : 'STANDBY'}
-            </span>
-          </div>
-          <div className="hidden sm:flex items-center gap-2">
-            <span>MEM:</span>
-            <span className="text-[#00FF00]">14.2 MB</span>
-            <span>VRAM:</span>
-            <span className="text-[#00FF00]">2.1 MB</span>
-          </div>
-          <span className="text-[#F27D26] font-bold">v1.0.4-LITE</span>
-        </div>
-      </footer>
+      {/* 4. ВЫДВИЖНЫЕ ПАНЕЛИ МАСТЕРА */}
+      <CombatTrackerDrawer
+        combat={combat}
+        onChangeCombat={setCombat}
+        isOpen={isCombatOpen}
+        onClose={() => setIsCombatOpen(false)}
+      />
+
+      <AudioSoundboardDrawer
+        isOpen={isAudioOpen}
+        onClose={() => setIsAudioOpen(false)}
+      />
+
+      <SRDReferenceDrawer
+        isOpen={isSRDOpen}
+        onClose={() => setIsSRDOpen(false)}
+        onAddMonsterToCombat={handleAddMonsterFromSRD}
+        onApplySpellTemplate={handleApplySpellTemplateFromSRD}
+      />
+
+      <SceneNotesDrawer
+        scene={currentScene}
+        isOpen={isNotesOpen}
+        onClose={() => setIsNotesOpen(false)}
+        onUpdateScene={(up) => {
+          const updated = { ...currentScene, ...up };
+          setCurrentScene(updated);
+          setAllScenes((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+        }}
+        onBroadcastReadAloud={handleBroadcastReadAloud}
+        allScenes={allScenes}
+        onNavigateToPortalScene={(targetId) => {
+          const target = allScenes.find((s) => s.id === targetId);
+          if (target) handleSwitchScene(target);
+        }}
+      />
+
+      {/* 5. МОДАЛЬНЫЕ ОКНА */}
+      <MapVaultModal
+        isOpen={isVaultModalOpen}
+        onClose={() => setIsVaultModalOpen(false)}
+        currentScene={currentScene}
+        onSwitchScene={handleSwitchScene}
+        onAddNewScene={handleAddNewScene}
+        onAddLayerToCurrentScene={(layer) => {
+          setLayers((prev) => [...prev, layer]);
+          setSelectedLayerId(layer.id);
+        }}
+        allScenes={allScenes}
+        onImportCampaign={(imported) => {
+          setAllScenes(imported);
+          if (imported.length > 0) handleSwitchScene(imported[0]);
+        }}
+      />
+
+      <DiceRollerModal
+        isOpen={isDiceModalOpen}
+        onClose={() => setIsDiceModalOpen(false)}
+        onBroadcastRoll={handleBroadcastDiceRoll}
+      />
+
+      <RandomGeneratorStudioModal
+        isOpen={isGeneratorStudioOpen}
+        onClose={() => setIsGeneratorStudioOpen(false)}
+        onBroadcastCard={handleBroadcastHandoutCard}
+        onAddMonsterToCombat={handleAddGeneratedMonsterToCombat}
+        onAppendSceneNotes={(text) => {
+          const updated = {
+            ...currentScene,
+            notes: (currentScene.notes || '') + text
+          };
+          setCurrentScene(updated);
+          setAllScenes((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+          setIsNotesOpen(true);
+        }}
+        onApplySpellTemplate={(template) => {
+          setTool('spell_template');
+          setSpellTemplate({
+            shape: template.type as any,
+            sizeFeet: template.radiusFt || template.lengthFt || 20,
+            originX: layers[0]?.width ? layers[0].width / 2 : 500,
+            originY: layers[0]?.height ? layers[0].height / 2 : 500,
+            angleDeg: template.angleDeg || 0,
+            color: template.color || 'rgba(242, 125, 38, 0.4)'
+          });
+          setIsGeneratorStudioOpen(false);
+          audioEngine.playSFX('fireball');
+        }}
+      />
     </div>
   );
 };
