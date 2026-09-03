@@ -285,34 +285,33 @@
 		import { BattlemapApp } from './battlemaps.js';
 		import { ExportManager } from './js/export.js';
 
-		window.battlemapApp = new BattlemapApp('openfl-content');
+		const app = new BattlemapApp('openfl-content');
+		window.battlemapApp = app;
 
-		// Parent Window Bridge for Tabletop Import
+		// PostMessage and Import Bridge for Tabletop Integration
 		window.addEventListener('message', (event) => {
+			if (!event.data) return;
 			const data = event.data;
-			if (!data || typeof data !== 'object') return;
 
 			if (data.type === 'BATTLEMAP_REQUEST_EXPORT' || data.action === 'EXPORT_PNG') {
-				if (window.battlemapApp && window.battlemapApp.state && window.battlemapApp.state.map) {
-					ExportManager.exportImage(
-						window.battlemapApp.state.map,
-						window.battlemapApp.grid,
-						window.battlemapApp.fog,
-						window.battlemapApp.tokens,
-						{ format: 'image/png' }
-					);
+				if (app && app.state && app.state.map) {
+					ExportManager.exportImage(app.state.map, app.grid, app.fog, app.tokens, {
+						download: !!data.download
+					});
 				}
-			} else if (data.action === 'REROLL' || data.type === 'BATTLEMAP_REROLL') {
-				if (window.battlemapApp && window.battlemapApp.state) {
-					window.battlemapApp.state.randomizeSeed();
+			} else if (data.action === 'REROLL') {
+				if (app && app.state) {
+					app.state.randomizeSeed();
 				}
-			} else if (data.action === 'SET_BIOME') {
-				if (window.battlemapApp && window.battlemapApp.state) {
-					window.battlemapApp.state.setBiome(data.biome);
+			} else if (data.action === 'SET_BIOME' && data.biome) {
+				if (app && app.state) {
+					app.state.setBiome(data.biome);
+					if (app.syncCheckboxesWithState) app.syncCheckboxesWithState();
 				}
-			} else if (data.action === 'SET_LIGHT') {
-				if (window.battlemapApp && window.battlemapApp.state) {
-					window.battlemapApp.state.setToggle('lighting', data.light);
+			} else if (data.action === 'SET_LIGHT' && data.light) {
+				if (app && app.state) {
+					app.state.setToggle('lighting', data.light);
+					if (app.syncCheckboxesWithState) app.syncCheckboxesWithState();
 				}
 			}
 		});

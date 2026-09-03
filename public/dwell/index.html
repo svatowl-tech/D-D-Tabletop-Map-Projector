@@ -408,8 +408,9 @@
 						break;
 
 					case 'DWELLINGS_SET_FLOOR':
-						if (typeof data.floorIndex === 'number' && window.__dwellings_scene && window.__dwellings_scene.setFloor) {
-							window.__dwellings_scene.setFloor(data.floorIndex);
+						var targetFloor = typeof data.floorIndex === 'number' ? data.floorIndex : (typeof data.floor === 'number' ? data.floor : 0);
+						if (window.__dwellings_scene && window.__dwellings_scene.setFloor) {
+							window.__dwellings_scene.setFloor(targetFloor);
 							setTimeout(sendHouseInfo, 50);
 						}
 						break;

@@ -41,43 +41,44 @@ export class ExportManager {
       fogManager.render(ctx, { x: 0, y: 0, scale: scale });
     }
 
-    // Download trigger
     const dataUrl = offCanvas.toDataURL(format, 0.95);
-    const link = document.createElement('a');
-    const safeSeed = map.seed.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const fileNameStr = `battlemap_${map.biomeId}_${safeSeed}_${map.grid.cols}x${map.grid.rows}.png`;
-    link.download = fileNameStr;
-    link.href = dataUrl;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
 
-    // Notify parent window (InteractiveGeneratorStudio / MapVaultModal) via postMessage
-    try {
-      const msg = {
-        type: 'BATTLEMAP_EXPORT',
-        dataUrl: dataUrl,
-        filename: fileNameStr,
-        title: map.encounterInfo?.title || 'Боевая карта',
-        biome: map.biomeId,
-        width: map.grid.cols * 5,
-        height: map.grid.rows * 5,
-        lighting: map.lighting,
-        format: 'png'
-      };
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage(msg, '*');
-      }
-      if (window.top && window.top !== window && window.top !== window.parent) {
-        window.top.postMessage(msg, '*');
-      }
-    } catch (e) {
-      console.warn('PostMessage export notification failed:', e);
+    // Send postMessage for tabletop import
+    const msg = {
+      type: 'BATTLEMAP_EXPORT',
+      dataUrl: dataUrl,
+      filename: `battlemap_${map.biomeId}_${map.seed}`,
+      title: map.encounterInfo ? map.encounterInfo.title : 'Wilderness Battlemap',
+      biome: map.biomeId,
+      width: W,
+      height: H,
+      lighting: map.lighting || 'day',
+      seed: map.seed
+    };
+
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(msg, '*');
+    }
+    if (window.top && window.top !== window && window.top !== window.parent) {
+      window.top.postMessage(msg, '*');
+    }
+
+    // Download trigger if allowed
+    if (options.download !== false) {
+      const link = document.createElement('a');
+      const safeSeed = map.seed.replace(/[^a-zA-Z0-9_-]/g, '_');
+      link.download = `battlemap_${map.biomeId}_${safeSeed}_${map.grid.cols}x${map.grid.rows}.png`;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
 
     // Free resources
     offCanvas.width = 1;
     offCanvas.height = 1;
+
+    return dataUrl;
   }
 
   static exportVTTJson(map) {

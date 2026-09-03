@@ -138,6 +138,7 @@ export const DMView: React.FC = () => {
   const [grid, setGrid] = useState<GridConfig>(currentScene.grid);
   const [isCalibratingGrid, setIsCalibratingGrid] = useState<boolean>(false);
   const [gridCalibrationBox, setGridCalibrationBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [gridCalibrationCellsCount, setGridCalibrationCellsCount] = useState<number>(1);
   const gridDragStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Тактические оверлеи
@@ -765,7 +766,10 @@ export const DMView: React.FC = () => {
 
       setGridCalibrationBox({ x: boxX, y: boxY, w: boxW, h: boxH });
 
-      const rawSize = (boxW + boxH) / 2;
+      const count = gridCalibrationCellsCount || 1;
+      const cellW = boxW / count;
+      const cellH = boxH / count;
+      const rawSize = (cellW + cellH) / 2;
       const size = Math.max(10, Math.round(rawSize));
       const offX = Math.round(((boxX % size) + size) % size);
       const offY = Math.round(((boxY % size) + size) % size);
@@ -1708,6 +1712,9 @@ export const DMView: React.FC = () => {
             mapWidth={mapWidth}
             mapHeight={mapHeight}
             viewportScale={viewport.scale}
+            selectionBox={gridCalibrationBox}
+            cellsCount={gridCalibrationCellsCount}
+            onCellsCountChange={setGridCalibrationCellsCount}
             showToast={showToast}
           />
 

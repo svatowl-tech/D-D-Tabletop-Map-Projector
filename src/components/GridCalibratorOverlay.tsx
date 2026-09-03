@@ -19,6 +19,9 @@ interface GridCalibratorOverlayProps {
   mapWidth: number;
   mapHeight: number;
   viewportScale: number;
+  selectionBox?: { x: number; y: number; w: number; h: number } | null;
+  cellsCount: number;
+  onCellsCountChange: (count: number) => void;
   showToast?: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -30,35 +33,34 @@ export const GridCalibratorOverlay: React.FC<GridCalibratorOverlayProps> = ({
   mapWidth,
   mapHeight,
   viewportScale,
+  selectionBox,
+  cellsCount,
+  onCellsCountChange,
   showToast
 }) => {
-  // Количество ячеек в выделенной рамке (1x1, 2x2, 3x3, 5x5, 10x10)
-  const [cellsCount, setCellsCount] = useState<number>(1);
-
   // Исходная конфигурация сетки до начала калибровки (для сброса)
   const initialGridRef = useRef<GridConfig>(grid);
 
   // Состояние выделенной области калибровки на карте (в пикселях карты)
-  const [selection, setSelection] = useState<{
+  const [internalSelection, setInternalSelection] = useState<{
     x: number;
     y: number;
     w: number;
     h: number;
   } | null>(null);
 
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef<StrokePoint | null>(null);
+  // Эффективная выделенная область (из пропсов во время перетаскивания мышью или дефолтная)
+  const selection = selectionBox || internalSelection;
 
   // При активации сохраняем начальное состояние
   useEffect(() => {
     if (active) {
       initialGridRef.current = { ...grid };
-      // Если сетка уже настроена, создаем тестовое выделение в центре
-      if (grid.size > 0 && !selection) {
+      if (grid.size > 0 && !selectionBox && !internalSelection) {
         const sz = grid.size * cellsCount;
         const startX = (grid.offsetX || 0) + grid.size * 2;
         const startY = (grid.offsetY || 0) + grid.size * 2;
-        setSelection({
+        setInternalSelection({
           x: startX,
           y: startY,
           w: sz,
@@ -68,7 +70,7 @@ export const GridCalibratorOverlay: React.FC<GridCalibratorOverlayProps> = ({
     }
   }, [active]);
 
-  // Расчет сетки по выделить область
+  // Расчет сетки по области
   const calculateAndApplyGrid = useCallback((x: number, y: number, w: number, h: number, count: number) => {
     if (w < 5 || h < 5) return;
 
@@ -92,12 +94,13 @@ export const GridCalibratorOverlay: React.FC<GridCalibratorOverlayProps> = ({
 
   // Изменение количества ячеек в мультипликаторе (1x1 -> 5x5)
   const handleCellsCountChange = (count: number) => {
-    setCellsCount(count);
+    onCellsCountChange(count);
     if (selection) {
-      const newW = (selection.w / cellsCount) * count;
-      const newH = (selection.h / cellsCount) * count;
+      const currentCellSize = selection.w / cellsCount;
+      const newW = currentCellSize * count;
+      const newH = currentCellSize * count;
       const newSel = { ...selection, w: newW, h: newH };
-      setSelection(newSel);
+      setInternalSelection(newSel);
       calculateAndApplyGrid(newSel.x, newSel.y, newSel.w, newSel.h, count);
     }
   };

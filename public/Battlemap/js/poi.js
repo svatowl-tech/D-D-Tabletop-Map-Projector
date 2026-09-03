@@ -89,13 +89,6 @@ export const POI_DICTIONARY = {
     category: 'lore',
     desc: 'Деревянный эшафот с подвешенной железной клеткой и дорожными указателями',
     icon: '⚖️'
-  },
-  shipwreck: {
-    id: 'shipwreck',
-    name: 'Кораблекрушение на мели',
-    category: 'ruins',
-    desc: 'Обломки застрявшего на мели галеона с пробитым шпангоутом и сломанной мачтой',
-    icon: '⛵'
   }
 };
 
@@ -132,8 +125,6 @@ export class POIGenerator {
         return this.createCursedStatue(x, y, CS);
       case 'fairy_spring':
         return this.createFairySpring(x, y, CS);
-      case 'shipwreck':
-        return this.createShipwreck(x, y, CS);
       case 'gallows_crossroad':
       default:
         return this.createGallowsCrossroad(x, y, CS);
@@ -399,21 +390,6 @@ export class POIGenerator {
         y: y + 16,
         signs: ['Тракт', 'Северный форпост', 'Ведьмин лог']
       }
-    };
-  }
-
-  createShipwreck(x, y, CS) {
-    return {
-      type: 'shipwreck',
-      name: 'Кораблекрушение на мели',
-      x,
-      y,
-      length: CS * 3.2,
-      width: CS * 1.5,
-      angle: this.prng.float(-0.3, 0.4),
-      brokenMast: true,
-      scatteredDebris: 8,
-      barnacles: true
     };
   }
 }

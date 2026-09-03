@@ -387,10 +387,6 @@ export class BattlemapApp {
         this.state.setTool('measure');
       } else if (key === 'p') {
         this.state.setTool('pan');
-      } else if (key === 't') {
-        this.tokens.spawnQuickEncounter(this.state.biomeId, this.state.map);
-        this.broadcastTokens();
-        this.requestRender();
       } else if (key === 'v') {
         // Spawn an extra merchant wagon on the road / center
         this.vehicles.addVehicle({
@@ -503,8 +499,6 @@ export class BattlemapApp {
         </div>
         <div class="bm-quick-actions">
           <button id="btn-reroll" title="Сгенерировать случайную карту (Пробел / R)">🎲 Случайно (R)</button>
-          <button id="btn-encounter" title="Быстрая расстановка врагов (T)">⚔️ Схватка (T)</button>
-          <button id="btn-projector" title="Открыть окно для игроков / проектора">🖥️ Проектор</button>
           <button id="btn-export-png" title="Скачать карту PNG">💾 PNG</button>
         </div>
       </div>
@@ -546,7 +540,6 @@ export class BattlemapApp {
               <option value="cursed_statue">🗿 Проклятый каменный идол</option>
               <option value="fairy_spring">✨ Волшебный источник фей</option>
               <option value="gallows_crossroad">⛓️ Виселица на перекрестке</option>
-              <option value="shipwreck">⛵ Кораблекрушение на мели</option>
             </select>
           </div>
         </div>
@@ -572,14 +565,13 @@ export class BattlemapApp {
             </select>
           </div>
           <div class="bm-col">
-            <label class="bm-label">Освещение / Погода</label>
+            <label class="bm-label">Освещение</label>
             <select id="sel-light" class="bm-select">
               <option value="day">☀️ День</option>
               <option value="dusk">🌅 Закат / Сумерки</option>
               <option value="night">🌙 Ночь (Костер)</option>
               <option value="fog">🌫️ Туман</option>
               <option value="rain">🌧️ Дождь</option>
-              <option value="snow">❄️ Снег</option>
             </select>
           </div>
         </div>
@@ -630,19 +622,21 @@ export class BattlemapApp {
   bindUIEvents() {
     const biomesList = [
       { id: 'forest', name: '🌲 Лес' },
-      { id: 'winter', name: '❄️ Зима / Снег' },
-      { id: 'desert', name: '🏜️ Пустыня' },
-      { id: 'swamp', name: '🐸 Болото' },
-      { id: 'cave', name: '🕳️ Пещеры / Грот' },
-      { id: 'dungeon', name: '🏰 Подземелье' },
-      { id: 'archipelago', name: '🏝️ Архипелаг' },
-      { id: 'ship', name: '⛵ Корабли' },
       { id: 'road', name: '🛤️ Дорога' },
       { id: 'river', name: '🌊 Река' },
-      { id: 'meadow', name: '🌾 Поля / Луга' },
+      { id: 'meadow', name: '🌾 Поля' },
+      { id: 'swamp', name: '🐸 Болото' },
+      { id: 'winter', name: '❄️ Зима / Снег' },
+      { id: 'desert', name: '🏜️ Пески' },
       { id: 'ruins', name: '🏛️ Руины' },
       { id: 'cabin', name: '🏠 Хижина' },
-      { id: 'camp', name: '⛺ Лагерь' }
+      { id: 'village', name: '🏡 Деревня' },
+      { id: 'city', name: '🏙️ Город' },
+      { id: 'camp', name: '⛺ Лагерь' },
+      { id: 'cave', name: '🕳️ Пещеры' },
+      { id: 'dungeon', name: '🏰 Подземелье' },
+      { id: 'archipelago', name: '🏝️ Архипелаг' },
+      { id: 'ship', name: '⛵ Корабли' }
     ];
 
     const bGrid = document.getElementById('bm-biomes');
@@ -712,16 +706,6 @@ export class BattlemapApp {
     };
 
     document.getElementById('btn-reroll').onclick = () => this.state.randomizeSeed();
-    document.getElementById('btn-encounter').onclick = () => {
-      this.tokens.spawnQuickEncounter(this.state.biomeId, this.state.map);
-      this.broadcastTokens();
-      this.requestRender();
-    };
-
-    document.getElementById('btn-projector').onclick = () => {
-      const projUrl = `${window.location.pathname}?view=projector&seed=${this.state.seed}&biome=${this.state.biomeId}`;
-      window.open(projUrl, '_blank', 'width=1280,height=800,menubar=no,toolbar=no,location=no');
-    };
 
     document.getElementById('btn-export-png').onclick = () => {
       ExportManager.exportImage(this.state.map, this.grid, this.fog, this.tokens);
@@ -756,18 +740,10 @@ export class BattlemapApp {
   }
 }
 
-// Global bootstrap for standalone embedding & window scope access
+// Global bootstrap for standalone embedding
 if (typeof window !== 'undefined') {
-  window.BattlemapGenerator = BattlemapGenerator;
-  window.BattlemapRenderer = BattlemapRenderer;
-  window.BIOMES = BIOMES;
-  window.BattlemapState = BattlemapState;
-  window.BattlemapApp = BattlemapApp;
   window.Battlemap = {
     init: (containerId, options) => new BattlemapApp(containerId, options),
-    App: BattlemapApp,
-    Generator: BattlemapGenerator,
-    Renderer: BattlemapRenderer,
-    BIOMES: BIOMES
+    App: BattlemapApp
   };
 }
