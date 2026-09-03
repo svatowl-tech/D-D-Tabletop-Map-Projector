@@ -28,11 +28,13 @@ import {
   CombatTrackerState,
   DiceRollResult,
   FogTextureStyle,
-  BroadcastMessage
+  BroadcastMessage,
+  ElementalHazardZone
 } from '../types';
 import { GridOverlay } from './GridOverlay';
 import { PingOverlay } from './PingOverlay';
 import { TacticalDrawingOverlay } from './TacticalDrawingOverlay';
+import { ElementalHazardOverlay } from './ElementalHazardOverlay';
 import { PlayerInitiativeHUD } from './PlayerInitiativeHUD';
 import { PlayerBlackoutOverlay } from './PlayerBlackoutOverlay';
 import { PlayerDiceOverlay } from './PlayerDiceOverlay';
@@ -41,6 +43,11 @@ import { HandoutCardPayload } from '../types/generator';
 import { syncService } from '../services/syncChannel';
 import { loadSyncedStateFromCache } from '../services/syncedStateCache';
 import { Maximize2, Minimize2, Radio, RefreshCw } from 'lucide-react';
+import {
+  toggleAppFullscreen,
+  isElementFullscreen,
+  addFullscreenChangeListener
+} from '../utils/macOSCompatibility';
 
 export const PlayerView: React.FC = () => {
   const [layers, setLayers] = useState<MapLayer[]>([]);
@@ -58,6 +65,7 @@ export const PlayerView: React.FC = () => {
   const [pings, setPings] = useState<MapPing[]>([]);
   const [laserPoints, setLaserPoints] = useState<LaserPoint[]>([]);
   const [drawings, setDrawings] = useState<TacticalDrawing[]>([]);
+  const [hazards, setHazards] = useState<ElementalHazardZone[]>([]);
   const [spellTemplate, setSpellTemplate] = useState<SpellTemplate | null>(null);
   const [ruler, setRuler] = useState<RulerMeasurement | null>(null);
   const [blackoutTheme, setBlackoutTheme] = useState<BlackoutTheme>('none');
@@ -178,6 +186,9 @@ export const PlayerView: React.FC = () => {
             if (s.blackoutTheme) setBlackoutTheme(s.blackoutTheme);
             if (s.combat) setCombat(s.combat);
             if (s.fogStyle) setFogStyle(s.fogStyle);
+            if (s.drawings) setDrawings(s.drawings);
+            if (s.hazards) setHazards(s.hazards);
+            if (s.spellTemplate !== undefined) setSpellTemplate(s.spellTemplate);
 
             if (s.layers && s.layers[0]) {
               initFogCanvas(s.layers[0].width, s.layers[0].height);
@@ -295,6 +306,10 @@ export const PlayerView: React.FC = () => {
           setDrawings(message.drawings || []);
           break;
 
+        case 'SYNC_HAZARDS':
+          setHazards(message.hazards || []);
+          break;
+
         case 'SYNC_SPELL_TEMPLATE':
           setSpellTemplate(message.template || null);
           break;
@@ -351,19 +366,23 @@ export const PlayerView: React.FC = () => {
       syncService.send({ type: 'HANDSHAKE_REQUEST' });
     }, 2000);
 
+    // Слушатель смены полноэкранного режима для WebKit / macOS Safari
+    const removeFsListener = addFullscreenChangeListener((isFull) => {
+      setIsFullscreen(isFull);
+    });
+
     return () => {
       unsubscribe();
       clearInterval(handshakeTimer);
+      removeFsListener();
     };
   }, []);
 
-  // Полноэкранный режим
+  // Полноэкранный режим с поддержкой macOS Safari (webkit prefix)
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
-    } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
-    }
+    toggleAppFullscreen().then((success) => {
+      setIsFullscreen(isElementFullscreen());
+    });
   };
 
   const handleMouseMove = () => {
@@ -508,7 +527,14 @@ export const PlayerView: React.FC = () => {
           {/* Б. Тактическая сетка */}
           <GridOverlay grid={grid} width={mapWidth} height={mapHeight} />
 
-          {/* В. Холст Тумана Войны */}
+          {/* В. Стихийные эффекты (Огонь, Вода, Кислота, Лава, Газ, Туман) */}
+          <ElementalHazardOverlay
+            width={mapWidth}
+            height={mapHeight}
+            hazards={hazards}
+          />
+
+          {/* Г. Холст Тумана Войны */}
           <canvas
             ref={canvasRef}
             width={mapWidth}
@@ -516,7 +542,7 @@ export const PlayerView: React.FC = () => {
             className="absolute top-0 left-0 pointer-events-none z-20"
           />
 
-          {/* Г. Тактическое рисование, заклинания и линейка */}
+          {/* Д. Тактическое рисование, заклинания и линейка */}
           <TacticalDrawingOverlay
             width={mapWidth}
             height={mapHeight}
@@ -526,8 +552,8 @@ export const PlayerView: React.FC = () => {
             gridSize={grid.size}
           />
 
-          {/* Д. Маркеры внимания и лазерная указка */}
-          <PingOverlay pings={pings} laserPoints={laserPoints} />
+          {/* Е. Маркеры внимания и лазерная указка */}
+          <PingOverlay pings={pings} laserPoints={laserPoints} width={mapWidth} height={mapHeight} />
         </div>
       </main>
 

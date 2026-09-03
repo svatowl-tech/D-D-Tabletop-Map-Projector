@@ -168,9 +168,7 @@ export const PlayerViewportFrameOverlay: React.FC<Props> = ({
 
   return (
     <div
-      className={`absolute pointer-events-auto transition-shadow ${
-        isDragging || isResizing ? 'cursor-grabbing' : 'cursor-grab'
-      }`}
+      className="absolute pointer-events-none transition-shadow"
       style={{
         left: `${mapLeft}px`,
         top: `${mapTop}px`,
@@ -181,16 +179,16 @@ export const PlayerViewportFrameOverlay: React.FC<Props> = ({
     >
       {/* Рамка видимой области игроков */}
       <div
-        className={`w-full h-full border-2 rounded-lg relative flex flex-col justify-between transition-colors ${
+        className={`w-full h-full border-2 rounded-lg relative flex flex-col justify-between pointer-events-none transition-colors ${
           isLinkedCamera
-            ? 'border-[#F27D26] shadow-[0_0_25px_rgba(242,125,38,0.45)] bg-[#F27D26]/[0.03]'
-            : 'border-[#00E5FF] shadow-[0_0_25px_rgba(0,229,255,0.45)] bg-[#00E5FF]/[0.03]'
+            ? 'border-[#F27D26] shadow-[0_0_25px_rgba(242,125,38,0.45)] bg-[#F27D26]/[0.02]'
+            : 'border-[#00E5FF] shadow-[0_0_25px_rgba(0,229,255,0.45)] bg-[#00E5FF]/[0.02]'
         }`}
       >
         {/* ВЕРХНЯЯ ПАНЕЛЬ РАМКИ С ИНФОРМАЦИЕЙ И КНОПКАМИ БЫСТРОГО УПРАВЛЕНИЯ */}
         <div
           onMouseDown={handleDragStart}
-          className="absolute -top-11 left-0 right-0 flex items-center justify-between gap-2 px-3 py-1.5 rounded-t-md bg-[#111215]/95 border-t border-x border-[#2A2B30] text-white backdrop-blur shadow-xl select-none"
+          className="absolute -top-11 left-0 right-0 flex items-center justify-between gap-2 px-3 py-1.5 rounded-t-md bg-[#111215]/95 border-t border-x border-[#2A2B30] text-white backdrop-blur shadow-xl select-none pointer-events-auto cursor-grab active:cursor-grabbing"
         >
           {/* Левый блок: статус подключения и разрешение */}
           <div className="flex items-center gap-2">
@@ -293,7 +291,7 @@ export const PlayerViewportFrameOverlay: React.FC<Props> = ({
         {/* Ручка масштабирования в правом нижнем углу */}
         <div
           onMouseDown={handleResizeStart}
-          className="absolute -bottom-3 -right-3 w-6 h-6 bg-[#111215] border-2 border-[#F27D26] rounded-full flex items-center justify-center cursor-nwse-resize hover:scale-125 transition-transform shadow-lg"
+          className="absolute -bottom-3 -right-3 w-6 h-6 bg-[#111215] border-2 border-[#F27D26] rounded-full flex items-center justify-center cursor-nwse-resize hover:scale-125 transition-transform shadow-lg pointer-events-auto"
           title="Потяните для изменения зума игроков"
         >
           <ZoomIn size={12} className="text-[#F27D26]" />

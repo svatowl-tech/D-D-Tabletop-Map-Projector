@@ -1,0 +1,62 @@
+{
+  "englishName": "Two-Headed Ice Wolf",
+  "type": "monstrosity",
+  "size": "Large",
+  "alignment": "Neutral",
+  "armorClass": 14,
+  "hitPoints": "4d10 + 8",
+  "hitDice": "4d10",
+  "speed": {
+    "walk": 50,
+    "swim": 0,
+    "fly": 0
+  },
+  "abilities": {
+    "strength": 14,
+    "dexterity": 16,
+    "constitution": 14,
+    "intelligence": 2,
+    "wisdom": 12,
+    "charisma": 6
+  },
+  "savingThrows": {
+    "strength": 4,
+    "dexterity": 5,
+    "constitution": 4,
+    "wisdom": 3
+  },
+  "skills": {
+    "perception": 3,
+    "stealth": 5
+  },
+  "damageImmunities": [
+    "cold"
+  ],
+  "senses": {
+    "darkvision": "60 ft.",
+    "passivePerception": 13
+  },
+  "languages": "understands Common but cannot speak",
+  "challengeRating": 3,
+  "proficiencyBonus": 2,
+  "multiattack": {
+    "description": "The Two-Headed Ice Wolf makes two attacks: one with its bite and one with its icy breath.",
+    "attacks": [
+      {
+        "name": "Bite",
+        "attackBonus": 5,
+        "damage": "1d10 + 3",
+        "damageType": "piercing"
+      },
+      {
+        "name": "Icy Breath",
+        "attackBonus": 5,
+        "damage": "2d6",
+        "damageType": "cold",
+        "areaOfEffect": "15-foot cone",
+        "savingThrow": "Dexterity"
+      }
+    ]
+  },
+  "description": "Двуглавый ледяной волк — это ужасное создание, с двумя головами, каждую из которых окружает облако ледяного пара. Эти волки охотятся стаями, и их двойные головы позволяют им быть особенно смертоносными."
+}

@@ -10,9 +10,10 @@ import { MonsterAbilityScores, MonsterAction, CreatureSize, CreatureType } from 
 // --- A. ТЕКСТОВЫЕ МОДЕЛИ И ЗАПРОСЫ ---
 export type TextModelId =
   | 'deepseek/deepseek-r1-distill-llama-70b'
-  | 'google/gemma-3-27b-it'
-  | 'openai/gpt-oss-20b'
   | 'deepseek/deepseek-chat'
+  | 'qwen/qwen-2.5-72b-instruct'
+  | 'meta-llama/llama-3.3-70b-instruct'
+  | 'openai/gpt-4o-mini'
   | 'openai/gpt-4o';
 
 export interface TextModelInfo {
@@ -370,7 +371,7 @@ export type ArtStylePreset =
 
 export type ArtModelId =
   | 'tongyi-mai/z-image'
-  | 'google/gemini-2.5-flash-image'
+  | 'black-forest-labs/flux-1-schnell'
   | 'bytedance/seedream-4'
   | 'gpt-image-1'
   | 'dall-e-3';

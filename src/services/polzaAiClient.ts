@@ -17,6 +17,7 @@ import {
   CompilePromptResponse,
   GenerateImageResponse
 } from '../types/polzaAi';
+import { appSettingsService } from './appSettingsService';
 
 class PolzaAiClient {
   /**
@@ -27,28 +28,43 @@ class PolzaAiClient {
       const res = await fetch('/api/polza/text-models');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      return { models: data.models || [], defaultModel: data.defaultModel || 'deepseek/deepseek-r1-distill-llama-70b' };
+      return { models: data.models || [], defaultModel: data.defaultModel || 'openai/gpt-4o-mini' };
     } catch (e) {
       console.warn('Fallback text models client mode:', e);
       return {
         models: [
+          {
+            id: 'openai/gpt-4o-mini',
+            name: 'OpenAI GPT-4o Mini',
+            provider: 'OpenAI (Polza AI)',
+            description: 'Сверхбыстрая компактная модель для генерации точного D&D 5e JSON без задержек.',
+            supportsReasoning: false,
+            isDefault: true
+          },
+          {
+            id: 'deepseek/deepseek-chat',
+            name: 'DeepSeek Chat V3',
+            provider: 'DeepSeek (Polza AI)',
+            description: 'Флагманская модель для сюжетных квестов и диалогов.',
+            supportsReasoning: false
+          },
+          {
+            id: 'qwen/qwen-2.5-72b-instruct',
+            name: 'Qwen 2.5 72B Instruct',
+            provider: 'Alibaba Cloud',
+            description: 'Мощная модель для создания детального фэнтези лора и правил.',
+            supportsReasoning: false
+          },
           {
             id: 'deepseek/deepseek-r1-distill-llama-70b',
             name: 'DeepSeek R1 Distill Llama 70B',
             provider: 'DeepSeek / Meta',
             description: 'Флагманская модель с блоком рассуждений <think> и D&D 5e математикой.',
             supportsReasoning: true,
-            isDefault: true
-          },
-          {
-            id: 'google/gemma-3-27b-it',
-            name: 'Google Gemma 3 27B IT',
-            provider: 'Google',
-            description: 'Высокоскоростная модель Google.',
-            supportsReasoning: false
+            isDefault: false
           }
         ],
-        defaultModel: 'deepseek/deepseek-r1-distill-llama-70b'
+        defaultModel: 'openai/gpt-4o-mini'
       };
     }
   }
@@ -58,10 +74,24 @@ class PolzaAiClient {
    */
   public async generateJsonEntity(options: GenerateJsonOptions, model?: string): Promise<GenerateJsonResponse> {
     try {
+      const settings = appSettingsService.getSettings();
+      const chosenModel = model || settings.polzaAi.defaultModel || 'openai/gpt-4o-mini';
+      const systemPrompt = settings.systemPrompts.monsterSystemPrompt;
+      const temperature = settings.polzaAi.temperature;
+      const apiKey = settings.polzaAi.customApiKey;
+      const timeoutMs = (settings.polzaAi.requestTimeoutSec || 10) * 1000;
+
       const res = await fetch('/api/polza/generate-json', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ options, model })
+        body: JSON.stringify({
+          options,
+          model: chosenModel,
+          systemPrompt,
+          temperature,
+          apiKey,
+          timeoutMs
+        })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
@@ -76,10 +106,24 @@ class PolzaAiClient {
    */
   public async generateCampaign(options: CampaignGeneratorOptions): Promise<{ campaign: GeneratedCampaign; savedFilePath?: string }> {
     try {
+      const settings = appSettingsService.getSettings();
+      const chosenModel = settings.polzaAi.defaultModel || 'openai/gpt-4o-mini';
+      const systemPrompt = settings.systemPrompts.campaignSystemPrompt;
+      const temperature = settings.polzaAi.temperature;
+      const apiKey = settings.polzaAi.customApiKey;
+      const timeoutMs = (settings.polzaAi.requestTimeoutSec || 12) * 1000;
+
       const res = await fetch('/api/polza/generate-campaign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(options)
+        body: JSON.stringify({
+          options,
+          model: chosenModel,
+          systemPrompt,
+          temperature,
+          apiKey,
+          timeoutMs
+        })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();

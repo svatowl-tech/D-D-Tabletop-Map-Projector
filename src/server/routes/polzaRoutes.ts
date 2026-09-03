@@ -18,7 +18,7 @@ const router = Router();
 // GET /api/polza/text-models
 router.get('/text-models', (req: Request, res: Response) => {
   const models = polzaAiService.getTextModels();
-  const defaultModel = models.find((m) => m.isDefault)?.id || 'deepseek/deepseek-r1-distill-llama-70b';
+  const defaultModel = models.find((m) => m.isDefault)?.id || 'openai/gpt-4o-mini';
   res.json({
     success: true,
     models,
@@ -29,36 +29,64 @@ router.get('/text-models', (req: Request, res: Response) => {
 // POST /api/polza/generate-json
 router.post('/generate-json', async (req: Request, res: Response) => {
   try {
-    const { model, options, temperature, autoSaveToDatabase } = req.body || {};
+    const { model, options, systemPrompt, temperature, apiKey, timeoutMs } = req.body || {};
     if (!options || !options.entityType) {
       return res.status(400).json({ success: false, error: 'Параметр options.entityType обязателен' });
     }
 
-    const result = await polzaAiService.generateJsonEntity(options, model);
+    const result = await polzaAiService.generateJsonEntity(options, model, {
+      systemPrompt,
+      temperature,
+      apiKey,
+      timeoutMs
+    });
     res.json(result);
   } catch (error: any) {
-    console.error('Error in /api/polza/generate-json:', error);
-    res.status(500).json({ success: false, error: error.message || 'Ошибка генерации сущности' });
+    console.error('Error in /api/polza/generate-json, serving fallback entity:', error);
+    try {
+      const fallbackResult = polzaAiService.createFallbackJsonResult(
+        req.body?.options || { entityType: 'monster', userPrompt: 'Сущность D&D 5e' },
+        error?.message || 'Откат на локальную генерацию D&D 5e'
+      );
+      res.json(fallbackResult);
+    } catch (fallbackError: any) {
+      res.status(500).json({ success: false, error: error?.message || 'Ошибка генерации сущности' });
+    }
   }
 });
 
 // POST /api/polza/generate-campaign
 router.post('/generate-campaign', async (req: Request, res: Response) => {
   try {
-    const options = req.body || {};
-    if (!options.title) {
-      options.title = 'Кровавое Затмение Драговии';
+    const { model, options, systemPrompt, temperature, apiKey, timeoutMs } = req.body || {};
+    const campaignOpts = options || req.body || {};
+    if (!campaignOpts.title) {
+      campaignOpts.title = 'Кровавое Затмение Драговии';
     }
 
-    const campaign = await polzaAiService.generateCampaign(options);
+    const campaign = await polzaAiService.generateCampaign(campaignOpts, {
+      systemPrompt,
+      temperature,
+      apiKey,
+      timeoutMs
+    });
     res.json({
       success: true,
       campaign,
       savedFilePath: `/api/assets/file/data/Campaigns/${campaign.id}.json`
     });
   } catch (error: any) {
-    console.error('Error in /api/polza/generate-campaign:', error);
-    res.status(500).json({ success: false, error: error.message || 'Ошибка генерации кампании' });
+    console.error('Error in /api/polza/generate-campaign, serving fallback campaign:', error);
+    try {
+      const fallbackCampaign = polzaAiService.createFallbackCampaign(req.body?.options || req.body || {});
+      res.json({
+        success: true,
+        campaign: fallbackCampaign,
+        savedFilePath: `/api/assets/file/data/Campaigns/${fallbackCampaign.id}.json`
+      });
+    } catch (fallbackError: any) {
+      res.status(500).json({ success: false, error: error?.message || 'Ошибка генерации кампании' });
+    }
   }
 });
 

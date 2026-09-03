@@ -22,6 +22,8 @@ export default defineConfig(() => {
     build: {
       outDir: isStandalone ? 'dist-standalone' : 'dist',
       emptyOutDir: true,
+      target: ['es2018', 'safari11', 'chrome64', 'firefox60'],
+      cssTarget: ['safari11', 'chrome64'],
     },
     server: {
       port: 3000,

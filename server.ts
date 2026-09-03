@@ -22,6 +22,9 @@ async function startServer() {
   app.use('/api/polza', polzaRoutes);
   app.use('/api', polzaRoutes); // fallback для /api/assets/file/*
 
+  // Статическая раздача папки public (Dungeon, Cave, City, Village, Taverns и др.)
+  app.use(express.static(path.join(process.cwd(), 'public')));
+
   // Здоровье сервера
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

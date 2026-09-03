@@ -33,13 +33,18 @@ import {
   DiceRollResult,
   Scene,
   FogTextureStyle,
-  AudioEngineState
+  AudioEngineState,
+  ElementalHazardZone,
+  ElementalBrushConfig,
+  ElementalHazardType
 } from '../types';
 import { DMHeader } from './DMHeader';
 import { DMToolbar } from './DMToolbar';
 import { GridOverlay } from './GridOverlay';
+import { GridCalibratorOverlay } from './GridCalibratorOverlay';
 import { PingOverlay } from './PingOverlay';
 import { TacticalDrawingOverlay } from './TacticalDrawingOverlay';
+import { ElementalHazardOverlay } from './ElementalHazardOverlay';
 import { CombatTrackerDrawer } from './CombatTrackerDrawer';
 import { AudioSoundboardDrawer } from './AudioSoundboardDrawer';
 import { SRDReferenceDrawer } from './SRDReferenceDrawer';
@@ -49,11 +54,14 @@ import { UnifiedAssetFolderModal } from './UnifiedAssetFolderModal';
 import { DiceRollerModal } from './DiceRollerModal';
 import { RandomGeneratorStudioModal } from './RandomGeneratorStudioModal';
 import { PolzaAiStudioModal } from './PolzaAiStudioModal';
+import { SettingsModal } from './SettingsModal';
 import { PlayerViewportFrameOverlay } from './PlayerViewportFrameOverlay';
+import { TabletopDropOverlay } from './TabletopDropOverlay';
 import { HandoutCardPayload } from '../types/generator';
 import { FogEngine } from '../services/fogEngine';
 import { syncService } from '../services/syncChannel';
 import { storageService } from '../services/storageService';
+import { appSettingsService } from '../services/appSettingsService';
 import { saveSyncedStateToCache } from '../services/syncedStateCache';
 import { audioEngine } from '../services/audioEngine';
 import { mediaCache } from '../services/mediaCache';
@@ -61,7 +69,24 @@ import { assetCatalog } from '../services/assetCatalog';
 import { AssetItem } from '../services/fileSystemService';
 import { SAMPLE_MAPS } from '../utils/sampleMaps';
 import { SRDMonster, SRDSpell } from '../services/srdDatabase';
-import { Eye, EyeOff, Lock, Unlock, Move, Trash2, Tv, Crosshair, Radio, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  Unlock,
+  Move,
+  Trash2,
+  Tv,
+  Crosshair,
+  Radio,
+  Maximize2,
+  ZoomIn,
+  ZoomOut,
+  CheckCircle2,
+  AlertCircle,
+  Info as InfoIcon,
+  X as CloseIcon
+} from 'lucide-react';
 
 export const DMView: React.FC = () => {
   // 1. Базовые сцены кампании
@@ -109,16 +134,39 @@ export const DMView: React.FC = () => {
   const [fogStyle, setFogStyle] = useState<FogTextureStyle>('classic_black');
   const [masterFogOpacity, setMasterFogOpacity] = useState<number>(0.55);
 
-  // Сетка
+  // Сетка и калибровка
   const [grid, setGrid] = useState<GridConfig>(currentScene.grid);
+  const [isCalibratingGrid, setIsCalibratingGrid] = useState<boolean>(false);
+  const [gridCalibrationBox, setGridCalibrationBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const gridDragStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Тактические оверлеи
   const [pings, setPings] = useState<MapPing[]>([]);
   const [laserPoints, setLaserPoints] = useState<LaserPoint[]>([]);
   const [drawings, setDrawings] = useState<TacticalDrawing[]>([]);
   const [activeDrawing, setActiveDrawing] = useState<TacticalDrawing | null>(null);
+  const [drawColor, setDrawColor] = useState<string>('#F27D26');
+  const [drawWidth, setDrawWidth] = useState<number>(4);
+  const [drawType, setDrawType] = useState<'freehand' | 'arrow' | 'highlighter'>('freehand');
+
+  // Стихийные зоны (Огонь, Вода, Газ)
+  const [hazards, setHazards] = useState<ElementalHazardZone[]>([]);
+  const [activeHazard, setActiveHazard] = useState<ElementalHazardZone | null>(null);
+  const [hazardConfig, setHazardConfig] = useState<ElementalBrushConfig>({
+    element: 'fire',
+    subType: 'fire_raging',
+    color: '#FF4500',
+    secondaryColor: '#FFD700',
+    radius: 60,
+    opacity: 0.85,
+    speed: 1.2,
+    density: 1.0
+  });
+
   const [spellTemplate, setSpellTemplate] = useState<SpellTemplate | null>(null);
   const [ruler, setRuler] = useState<RulerMeasurement | null>(null);
+  const [eraserRadius, setEraserRadius] = useState<number>(30);
+  const [mouseMapPos, setMouseMapPos] = useState<StrokePoint | null>(null);
 
   // Режим затемнения экрана игроков
   const [blackoutTheme, setBlackoutTheme] = useState<BlackoutTheme>('none');
@@ -134,6 +182,40 @@ export const DMView: React.FC = () => {
   // Аудио состояние
   const [audioState, setAudioState] = useState<AudioEngineState>(audioEngine.getState());
 
+  // Drag & Drop карты напрямую на стол (быстрая замена карты без лишних настроек)
+  const [isDraggingFileOver, setIsDraggingFileOver] = useState(false);
+  const [isShiftPressed, setIsShiftPressed] = useState(false);
+  const [toastNotification, setToastNotification] = useState<{
+    message: string;
+    type: 'success' | 'info' | 'error';
+  } | null>(null);
+  const dragCounterRef = useRef(0);
+  const toastTimeoutRef = useRef<any>(null);
+
+  // Отслеживание нажатия Shift для режима добавления слоя
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setIsShiftPressed(true);
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setIsShiftPressed(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  const showToast = useCallback((message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastNotification({ message, type });
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastNotification(null);
+    }, 4000);
+  }, []);
+
   // Состояния открытия панелей и модальных окон
   const [isCombatOpen, setIsCombatOpen] = useState(false);
   const [isAudioOpen, setIsAudioOpen] = useState(false);
@@ -144,6 +226,20 @@ export const DMView: React.FC = () => {
   const [isDiceModalOpen, setIsDiceModalOpen] = useState(false);
   const [isGeneratorStudioOpen, setIsGeneratorStudioOpen] = useState(false);
   const [isPolzaAiStudioOpen, setIsPolzaAiStudioOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
+  // Глобальный слушатель предупреждения при закрытии вкладки
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const settings = appSettingsService.getSettings();
+      if (settings.permissions.warnOnTabClose && combat.isActive) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [combat.isActive]);
 
   // Ссылки на DOM и движок тумана
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -263,6 +359,11 @@ export const DMView: React.FC = () => {
     syncService.send({ type: 'SYNC_DRAWINGS', drawings });
   }, [drawings]);
 
+  // Синхронизация стихийных зон (Огонь, Вода, Газ)
+  useEffect(() => {
+    syncService.send({ type: 'SYNC_HAZARDS', hazards });
+  }, [hazards]);
+
   // Синхронизация шаблона заклинания
   useEffect(() => {
     syncService.send({ type: 'SYNC_SPELL_TEMPLATE', template: spellTemplate });
@@ -272,6 +373,11 @@ export const DMView: React.FC = () => {
   useEffect(() => {
     syncService.send({ type: 'SYNC_RULER', ruler });
   }, [ruler]);
+
+  // Синхронизация сетки
+  useEffect(() => {
+    syncService.send({ type: 'SYNC_GRID', grid });
+  }, [grid]);
 
   // Полная синхронизация при подключении окна проектора и обновление кэша
   const broadcastFullState = useCallback(() => {
@@ -294,7 +400,11 @@ export const DMView: React.FC = () => {
       layers,
       blackoutTheme,
       combat,
-      fogStyle
+      fogStyle,
+      drawings,
+      hazards,
+      spellTemplate,
+      ruler
     };
 
     saveSyncedStateToCache(fullState);
@@ -304,7 +414,7 @@ export const DMView: React.FC = () => {
       type: 'SYNC_FULL_STATE',
       state: fullState
     });
-  }, [layers, currentScene, viewport, playerViewport, playerScreenSize, grid, blackoutTheme, combat, fogStyle]);
+  }, [layers, currentScene, viewport, playerViewport, playerScreenSize, grid, blackoutTheme, combat, fogStyle, drawings, hazards, spellTemplate, ruler]);
 
   useEffect(() => {
     const unsub = syncService.subscribe((msg) => {
@@ -412,6 +522,56 @@ export const DMView: React.FC = () => {
     };
   };
 
+  // Автоматическое затухание точек лазера
+  useEffect(() => {
+    if (laserPoints.length === 0) return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setLaserPoints((prev) => {
+        const active = prev.filter((p) => now - p.timestamp <= 1500);
+        return active.length === prev.length ? prev : active;
+      });
+    }, 150);
+    return () => clearInterval(interval);
+  }, [laserPoints]);
+
+  // Метод стирания объектов ластиком (рисунки, огонь, вода, газ, области заклинаний, линейка)
+  const eraseAtPoint = useCallback((pt: StrokePoint, radius: number) => {
+    // 1. Стираем рисунки маркером
+    setDrawings((prev) =>
+      prev.filter((d) => {
+        if (!d.points || d.points.length === 0) return false;
+        const hit = d.points.some((p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= radius + (d.width || 4) / 2);
+        return !hit;
+      })
+    );
+
+    // 2. Стираем стихийные бедствия (огонь, вода, газ)
+    setHazards((prev) =>
+      prev.filter((h) => {
+        if (!h.points || h.points.length === 0) return false;
+        const totalR = radius + (h.radius || 30);
+        const hit = h.points.some((p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= totalR);
+        return !hit;
+      })
+    );
+
+    // 3. Стираем область заклинания
+    setSpellTemplate((prev) => {
+      if (!prev) return null;
+      const dist = Math.hypot(prev.originX - pt.x, prev.originY - pt.y);
+      return dist <= radius + 50 ? null : prev;
+    });
+
+    // 4. Стираем линейку
+    setRuler((prev) => {
+      if (!prev) return null;
+      const d1 = Math.hypot(prev.startX - pt.x, prev.startY - pt.y);
+      const d2 = Math.hypot(prev.currentX - pt.x, prev.currentY - pt.y);
+      return d1 <= radius + 20 || d2 <= radius + 20 ? null : prev;
+    });
+  }, []);
+
   // 2. ОБРАБОТЧИКИ СОБЫТИЙ МЫШИ НА ХОЛСТЕ
   const handleMouseDown = (e: React.MouseEvent) => {
     // Средняя кнопка мыши или пробел — всегда панорамирование
@@ -424,6 +584,22 @@ export const DMView: React.FC = () => {
     if (e.button !== 0) return;
 
     const pt = getMapCoordinates(e);
+    setMouseMapPos(pt);
+
+    // 0. Ластик (стирание объектов на карте)
+    if (tool === 'eraser') {
+      isInteractingRef.current = true;
+      eraseAtPoint(pt, eraserRadius);
+      return;
+    }
+
+    // Калибровка и валидация сетки мышью
+    if (tool === 'grid_align' || isCalibratingGrid) {
+      isInteractingRef.current = true;
+      gridDragStartRef.current = { x: pt.x, y: pt.y };
+      setGridCalibrationBox({ x: pt.x, y: pt.y, w: 10, h: 10 });
+      return;
+    }
 
     // 1. Выделение и перемещение слоев
     if (tool === 'select') {
@@ -458,6 +634,16 @@ export const DMView: React.FC = () => {
       setTimeout(() => {
         setPings((prev) => prev.filter((p) => p.id !== newPing.id));
       }, 4000);
+      return;
+    }
+
+    // Лазерная указка (клик и ведение)
+    if (tool === 'laser') {
+      const now = Date.now();
+      lastLaserTimeRef.current = now;
+      const newPoint: LaserPoint = { x: pt.x, y: pt.y, timestamp: now };
+      setLaserPoints((prev) => [...prev.slice(-35), newPoint]);
+      syncService.send({ type: 'LASER_STREAM', point: newPoint });
       return;
     }
 
@@ -503,17 +689,45 @@ export const DMView: React.FC = () => {
       isInteractingRef.current = true;
       const newDrawing: TacticalDrawing = {
         id: `draw_${Date.now()}`,
-        type: 'freehand',
-        color: '#F27D26',
-        width: 4,
+        type: drawType,
+        color: drawColor,
+        width: drawWidth,
         points: [pt],
-        opacity: 0.9
+        opacity: drawType === 'highlighter' ? 0.45 : 0.95
       };
       setActiveDrawing(newDrawing);
       return;
     }
 
-    // 6. Туман войны (Reveal / Hide)
+    // 6. Стихийные эффекты (Огонь, Вода, Газ)
+    if (tool === 'hazard_fire' || tool === 'hazard_water' || tool === 'hazard_gas') {
+      const elemType: ElementalHazardType =
+        tool === 'hazard_fire' ? 'fire' : tool === 'hazard_water' ? 'water' : 'gas';
+      isInteractingRef.current = true;
+      const newHazard: ElementalHazardZone = {
+        id: `hazard_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        element: elemType,
+        subType:
+          hazardConfig.subType ||
+          (elemType === 'fire'
+            ? 'fire_raging'
+            : elemType === 'water'
+            ? 'water_clean'
+            : 'gas_smoke'),
+        color: hazardConfig.color,
+        secondaryColor: hazardConfig.secondaryColor,
+        radius: hazardConfig.radius,
+        opacity: hazardConfig.opacity,
+        speed: hazardConfig.speed,
+        density: hazardConfig.density,
+        points: [pt],
+        createdAt: Date.now()
+      };
+      setActiveHazard(newHazard);
+      return;
+    }
+
+    // 7. Туман войны (Reveal / Hide)
     if (tool === 'reveal' || tool === 'hide') {
       isInteractingRef.current = true;
       strokeBufferRef.current = [pt];
@@ -532,6 +746,39 @@ export const DMView: React.FC = () => {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const pt = getMapCoordinates(e);
+    setMouseMapPos(pt);
+
+    // Стирание ластиком
+    if (isInteractingRef.current && tool === 'eraser') {
+      eraseAtPoint(pt, eraserRadius);
+      return;
+    }
+
+    // Интерактивная калибровка сетки
+    if (isInteractingRef.current && (tool === 'grid_align' || isCalibratingGrid) && gridDragStartRef.current) {
+      const startX = gridDragStartRef.current.x;
+      const startY = gridDragStartRef.current.y;
+      const boxX = Math.min(startX, pt.x);
+      const boxY = Math.min(startY, pt.y);
+      const boxW = Math.max(10, Math.abs(pt.x - startX));
+      const boxH = Math.max(10, Math.abs(pt.y - startY));
+
+      setGridCalibrationBox({ x: boxX, y: boxY, w: boxW, h: boxH });
+
+      const rawSize = (boxW + boxH) / 2;
+      const size = Math.max(10, Math.round(rawSize));
+      const offX = Math.round(((boxX % size) + size) % size);
+      const offY = Math.round(((boxY % size) + size) % size);
+
+      setGrid((prev) => ({
+        ...prev,
+        enabled: true,
+        size,
+        offsetX: offX,
+        offsetY: offY
+      }));
+      return;
+    }
 
     // Панорамирование
     if (isInteractingRef.current && (tool === 'pan' || e.buttons === 4)) {
@@ -612,10 +859,27 @@ export const DMView: React.FC = () => {
 
     // Рисование
     if (isInteractingRef.current && tool === 'draw' && activeDrawing) {
-      setActiveDrawing({
-        ...activeDrawing,
-        points: [...activeDrawing.points, pt]
-      });
+      const lastPt = activeDrawing.points[activeDrawing.points.length - 1];
+      if (!lastPt || Math.hypot(pt.x - lastPt.x, pt.y - lastPt.y) >= 3) {
+        setActiveDrawing((prev) =>
+          prev ? { ...prev, points: [...prev.points, pt] } : null
+        );
+      }
+      return;
+    }
+
+    // Стихийные эффекты (Огонь, Вода, Газ)
+    if (
+      isInteractingRef.current &&
+      (tool === 'hazard_fire' || tool === 'hazard_water' || tool === 'hazard_gas') &&
+      activeHazard
+    ) {
+      const lastPt = activeHazard.points[activeHazard.points.length - 1];
+      if (!lastPt || Math.hypot(pt.x - lastPt.x, pt.y - lastPt.y) >= 4) {
+        setActiveHazard((prev) =>
+          prev ? { ...prev, points: [...prev.points, pt] } : null
+        );
+      }
       return;
     }
 
@@ -635,6 +899,10 @@ export const DMView: React.FC = () => {
   const handleMouseUp = () => {
     if (isDraggingLayerRef.current) {
       isDraggingLayerRef.current = false;
+    }
+
+    if (tool === 'grid_align' || isCalibratingGrid) {
+      gridDragStartRef.current = null;
     }
 
     if (isInteractingRef.current) {
@@ -658,6 +926,15 @@ export const DMView: React.FC = () => {
       if (tool === 'draw' && activeDrawing) {
         setDrawings((prev) => [...prev, activeDrawing]);
         setActiveDrawing(null);
+      }
+
+      // Сохранение стихийной зоны
+      if (
+        (tool === 'hazard_fire' || tool === 'hazard_water' || tool === 'hazard_gas') &&
+        activeHazard
+      ) {
+        setHazards((prev) => [...prev, activeHazard]);
+        setActiveHazard(null);
       }
     }
   };
@@ -702,42 +979,260 @@ export const DMView: React.FC = () => {
     syncService.send({ type: 'INVERT_FOG' });
   };
 
-  // 4. СЛОИ КАРТЫ
-  const handleAddImageLayer = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      const img = new Image();
-      img.onload = () => {
-        const newLayer: MapLayer = {
+  // 4. МГНОВЕННАЯ ЗАГРУЗКА И СЛОИ КАРТЫ (DRAG AND DROP & LAYERS)
+  const handleProcessDroppedMapFiles = async (files: File[], isOverlay: boolean = false) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+
+    const isVideo =
+      file.type.startsWith('video/') ||
+      ['mp4', 'webm', 'ogv'].includes(file.name.split('.').pop()?.toLowerCase() || '');
+    const isImage =
+      file.type.startsWith('image/') ||
+      ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(file.name.split('.').pop()?.toLowerCase() || '');
+
+    if (!isImage && !isVideo) {
+      showToast(
+        'Неподдерживаемый формат. Перетащите изображение (PNG, JPG, WEBP, GIF, SVG) или видео (MP4, WEBM).',
+        'error'
+      );
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = (err) => reject(err);
+        reader.readAsDataURL(file);
+      });
+
+      const cleanName = file.name.replace(/\.[^/.]+$/, '');
+
+      if (isImage) {
+        const img = new Image();
+        img.onload = () => {
+          const w = img.naturalWidth || 1920;
+          const h = img.naturalHeight || 1080;
+
+          if (isOverlay) {
+            // Режим наложения слоя (удержан Shift)
+            const newLayer: MapLayer = {
+              id: `layer_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              name: cleanName,
+              url: dataUrl,
+              dataUrl,
+              x: 0,
+              y: 0,
+              width: w,
+              height: h,
+              naturalWidth: w,
+              naturalHeight: h,
+              opacity: 1,
+              visible: true,
+              zIndex: layers.length + 1,
+              locked: false,
+              type: 'image'
+            };
+
+            const updatedLayers = [...layers, newLayer];
+            setLayers(updatedLayers);
+            setSelectedLayerId(newLayer.id);
+            syncService.send({ type: 'SYNC_LAYERS', layers: updatedLayers });
+            showToast(`Слой «${cleanName}» добавлен поверх карты`, 'info');
+          } else {
+            // Мгновенная замена базовой карты на столе
+            const baseLayer: MapLayer = {
+              id: `layer_${Date.now()}`,
+              name: cleanName,
+              url: dataUrl,
+              dataUrl,
+              x: 0,
+              y: 0,
+              width: w,
+              height: h,
+              naturalWidth: w,
+              naturalHeight: h,
+              opacity: 1,
+              visible: true,
+              zIndex: 1,
+              locked: true,
+              type: 'image'
+            };
+
+            setLayers([baseLayer]);
+            setSelectedLayerId(baseLayer.id);
+
+            // Обновляем текущую сцену
+            const updatedScene: Scene = {
+              ...currentScene,
+              name: cleanName,
+              layers: [baseLayer]
+            };
+            setCurrentScene(updatedScene);
+            setAllScenes((prev) => prev.map((s) => (s.id === currentScene.id ? updatedScene : s)));
+
+            // Настраиваем холст и движок тумана
+            if (fogEngineRef.current && canvasRef.current) {
+              fogEngineRef.current.resize(w, h);
+              fogEngineRef.current.clearAll();
+              canvasRef.current.width = w;
+              canvasRef.current.height = h;
+              renderFog();
+              fitToScreen(w, h);
+            }
+
+            // Вычисляем оптимальный масштаб для окна игроков
+            const Wp = playerScreenSize.width || 1920;
+            const Hp = playerScreenSize.height || 1080;
+            const scaleX = Wp / w;
+            const scaleY = Hp / h;
+            const playerScale = Math.min(scaleX, scaleY);
+            const playerX = (Wp - w * playerScale) / 2;
+            const playerY = (Hp - h * playerScale) / 2;
+            const newPlayerVp: ViewportTransform = { x: playerX, y: playerY, scale: playerScale };
+
+            setPlayerViewport(newPlayerVp);
+
+            // Мгновенная синхронизация со вторым экраном / проектором
+            syncService.send({ type: 'CLEAR_FOG' });
+            syncService.send({ type: 'SET_PLAYER_VIEWPORT', transform: newPlayerVp });
+            syncService.send({ type: 'SYNC_LAYERS', layers: [baseLayer] });
+
+            // Синхронизируем полный стейт и кэш
+            const fullState = {
+              hasMedia: true,
+              mediaType: 'image' as const,
+              mimeType: file.type || 'image/png',
+              dataUrl,
+              mediaWidth: w,
+              mediaHeight: h,
+              mediaName: cleanName,
+              viewport,
+              playerViewport: newPlayerVp,
+              playerScreenSize,
+              grid,
+              maskDataUrl: '',
+              layers: [baseLayer],
+              blackoutTheme,
+              combat,
+              fogStyle
+            };
+            saveSyncedStateToCache(fullState);
+            syncService.send({ type: 'SYNC_FULL_STATE', state: fullState });
+
+            // Сохраняем в реестр ассетов кампании
+            assetCatalog.importBrowserFiles([file], 'maps').catch(() => {});
+
+            audioEngine.playSFX('whoosh');
+            showToast(`Карта «${cleanName}» мгновенно загружена на стол и транслируется игрокам!`, 'success');
+          }
+        };
+        img.src = dataUrl;
+      } else if (isVideo) {
+        const baseLayer: MapLayer = {
           id: `layer_${Date.now()}`,
-          name: file.name.replace(/\.[^/.]+$/, ''),
+          name: cleanName,
           url: dataUrl,
           dataUrl,
           x: 0,
           y: 0,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
+          width: 1920,
+          height: 1080,
           opacity: 1,
           visible: true,
-          zIndex: layers.length + 1,
-          locked: false
+          zIndex: isOverlay ? layers.length + 1 : 1,
+          locked: !isOverlay,
+          type: 'video'
         };
 
-        setLayers((prev) => [...prev, newLayer]);
-        setSelectedLayerId(newLayer.id);
+        if (isOverlay) {
+          const updatedLayers = [...layers, baseLayer];
+          setLayers(updatedLayers);
+          setSelectedLayerId(baseLayer.id);
+          syncService.send({ type: 'SYNC_LAYERS', layers: updatedLayers });
+          showToast(`Видео-слой «${cleanName}» добавлен на стол`, 'info');
+        } else {
+          setLayers([baseLayer]);
+          setSelectedLayerId(baseLayer.id);
 
-        if (layers.length === 0 && fogEngineRef.current && canvasRef.current) {
-          fogEngineRef.current.resize(img.naturalWidth, img.naturalHeight);
-          canvasRef.current.width = img.naturalWidth;
-          canvasRef.current.height = img.naturalHeight;
-          renderFog();
-          fitToScreen(img.naturalWidth, img.naturalHeight);
+          const updatedScene: Scene = {
+            ...currentScene,
+            name: cleanName,
+            layers: [baseLayer]
+          };
+          setCurrentScene(updatedScene);
+          setAllScenes((prev) => prev.map((s) => (s.id === currentScene.id ? updatedScene : s)));
+
+          if (fogEngineRef.current && canvasRef.current) {
+            fogEngineRef.current.resize(1920, 1080);
+            fogEngineRef.current.clearAll();
+            canvasRef.current.width = 1920;
+            canvasRef.current.height = 1080;
+            renderFog();
+            fitToScreen(1920, 1080);
+          }
+
+          syncService.send({ type: 'CLEAR_FOG' });
+          syncService.send({ type: 'SYNC_LAYERS', layers: [baseLayer] });
+          assetCatalog.importBrowserFiles([file], 'animated_maps').catch(() => {});
+          audioEngine.playSFX('whoosh');
+          showToast(`Анимированная карта «${cleanName}» загружена и транслируется игрокам!`, 'success');
         }
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
+      }
+    } catch (err) {
+      console.error('Ошибка Drag-and-Drop загрузки карты:', err);
+      showToast('Не удалось загрузить файл карты. Попробуйте еще раз.', 'error');
+    }
+  };
+
+  // Обработчики Drag and Drop на холсте стола
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current += 1;
+      setIsDraggingFileOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      if (!isDraggingFileOver) {
+        setIsDraggingFileOver(true);
+      }
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current -= 1;
+      if (dragCounterRef.current <= 0) {
+        dragCounterRef.current = 0;
+        setIsDraggingFileOver(false);
+      }
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingFileOver(false);
+
+    if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+    const files: File[] = Array.from(e.dataTransfer.files);
+
+    handleProcessDroppedMapFiles(files, e.shiftKey || isShiftPressed);
+  };
+
+  const handleAddImageLayer = (file: File) => {
+    handleProcessDroppedMapFiles([file], false);
   };
 
   const handleRemoveLayer = (id: string) => {
@@ -1050,6 +1545,7 @@ export const DMView: React.FC = () => {
         onOpenDiceModal={() => setIsDiceModalOpen(true)}
         onOpenGeneratorStudio={() => setIsGeneratorStudioOpen(true)}
         onOpenPolzaAiStudio={() => setIsPolzaAiStudioOpen(true)}
+        onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
         audioState={audioState}
       />
 
@@ -1068,6 +1564,11 @@ export const DMView: React.FC = () => {
         onInvertFog={handleInvertFog}
         grid={grid}
         onUpdateGrid={(g) => setGrid({ ...grid, ...g })}
+        onStartGridCalibration={() => {
+          setIsCalibratingGrid(true);
+          setTool('grid_align');
+          showToast('Выделите 1 клетку (или блок) на карте мышью для идеальной автонастройки сетки', 'info');
+        }}
         layers={layers}
         selectedLayerId={selectedLayerId}
         onSelectLayer={setSelectedLayerId}
@@ -1076,8 +1577,38 @@ export const DMView: React.FC = () => {
         onToggleLayerLock={handleToggleLayerLock}
         onToggleLayerVisibility={handleToggleLayerVisibility}
         spellTemplate={spellTemplate}
-        onUpdateSpellTemplate={(t) => setSpellTemplate(spellTemplate ? { ...spellTemplate, ...t } : null)}
+        onUpdateSpellTemplate={(t) =>
+          setSpellTemplate((prev) =>
+            prev
+              ? { ...prev, ...t }
+              : {
+                  shape: 'sphere',
+                  sizeFeet: 20,
+                  originX: mapWidth / 2,
+                  originY: mapHeight / 2,
+                  angleDeg: 0,
+                  color: 'rgba(242, 125, 38, 0.45)',
+                  ...t
+                }
+          )
+        }
+        drawColor={drawColor}
+        onDrawColorChange={setDrawColor}
+        drawWidth={drawWidth}
+        onDrawWidthChange={setDrawWidth}
+        drawType={drawType}
+        onDrawTypeChange={setDrawType}
         onClearDrawings={() => setDrawings([])}
+        eraserRadius={eraserRadius}
+        onEraserRadiusChange={setEraserRadius}
+        onClearSpellTemplate={() => setSpellTemplate(null)}
+        onClearRuler={() => setRuler(null)}
+        hazardConfig={hazardConfig}
+        onUpdateHazardConfig={(c) => setHazardConfig((prev) => ({ ...prev, ...c }))}
+        onClearHazards={(elem) => {
+          if (elem) setHazards((prev) => prev.filter((h) => h.element !== elem));
+          else setHazards([]);
+        }}
       />
 
       {/* 3. ОСНОВНОЙ ВЬЮПОРТ ХОЛСТА (CANVAS STAGE) */}
@@ -1086,11 +1617,22 @@ export const DMView: React.FC = () => {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onMouseLeave={() => setMouseMapPos(null)}
         onWheel={handleWheel}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         className={`flex-1 relative overflow-hidden bg-[#0A0A0A] ${
           tool === 'pan' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
         }`}
       >
+        {/* Оверлей мгновенного перетаскивания карты (Drag and Drop directly on tabletop) */}
+        <TabletopDropOverlay
+          isDragActive={isDraggingFileOver}
+          isShiftPressed={isShiftPressed}
+        />
+
         {/* Контейнер трансформации (Панорамирование & Зум с GPU-ускорением) */}
         <div
           className="absolute top-0 left-0 origin-top-left will-change-transform"
@@ -1153,7 +1695,31 @@ export const DMView: React.FC = () => {
           {/* Б. Тактическая сетка (Square / Hex) */}
           <GridOverlay grid={grid} width={mapWidth} height={mapHeight} />
 
-          {/* В. Интерактивные порталы перехода локаций (Submap Portals) */}
+          {/* Б2. Интерактивная калибровка и валидация сетки */}
+          <GridCalibratorOverlay
+            active={isCalibratingGrid || tool === 'grid_align'}
+            grid={grid}
+            onUpdateGrid={(g) => setGrid((prev) => ({ ...prev, ...g }))}
+            onClose={() => {
+              setIsCalibratingGrid(false);
+              if (tool === 'grid_align') setTool('select');
+              setGridCalibrationBox(null);
+            }}
+            mapWidth={mapWidth}
+            mapHeight={mapHeight}
+            viewportScale={viewport.scale}
+            showToast={showToast}
+          />
+
+          {/* В. Стихийные эффекты (Огонь, Вода, Кислота, Лава, Задымление, Газы) */}
+          <ElementalHazardOverlay
+            width={mapWidth}
+            height={mapHeight}
+            hazards={hazards}
+            activeHazard={activeHazard}
+          />
+
+          {/* Г. Интерактивные порталы перехода локаций (Submap Portals) */}
           {currentScene.portals &&
             currentScene.portals.map((portal) => {
               const px = portal.x ?? 100;
@@ -1177,7 +1743,7 @@ export const DMView: React.FC = () => {
               );
             })}
 
-          {/* Г. Холст Тумана Войны */}
+          {/* Д. Холст Тумана Войны */}
           <canvas
             ref={canvasRef}
             width={mapWidth}
@@ -1185,7 +1751,7 @@ export const DMView: React.FC = () => {
             className="absolute top-0 left-0 pointer-events-none z-20"
           />
 
-          {/* Д. Оверлей тактического рисования, заклинаний и линейки */}
+          {/* Е. Оверлей тактического рисования, заклинаний и линейки */}
           <TacticalDrawingOverlay
             width={mapWidth}
             height={mapHeight}
@@ -1196,10 +1762,10 @@ export const DMView: React.FC = () => {
             gridSize={grid.size}
           />
 
-          {/* Е. Маркеры внимания и лазерная указка */}
-          <PingOverlay pings={pings} laserPoints={laserPoints} />
+          {/* Ж. Маркеры внимания и лазерная указка */}
+          <PingOverlay pings={pings} laserPoints={laserPoints} width={mapWidth} height={mapHeight} />
 
-          {/* Ж. РАМКА ВЬЮПОРТА ИГРОКОВ (PLAYER VIEWPORT FRAME OVERLAY) */}
+          {/* З. РАМКА ВЬЮПОРТА ИГРОКОВ (PLAYER VIEWPORT FRAME OVERLAY) */}
           <PlayerViewportFrameOverlay
             playerViewport={playerViewport}
             dmViewport={viewport}
@@ -1214,6 +1780,56 @@ export const DMView: React.FC = () => {
             onCenterPlayerOnDmView={handleCenterPlayerOnDmView}
             onFitMapForPlayers={handleFitMapForPlayers}
           />
+
+          {/* И. Индикатор курсора кисти / ластика / стихии */}
+          {mouseMapPos &&
+            ['eraser', 'draw', 'hazard_fire', 'hazard_water', 'hazard_gas', 'reveal', 'hide'].includes(
+              tool
+            ) && (
+              <div
+                className="absolute pointer-events-none rounded-full border-2 border-dashed z-50 -translate-x-1/2 -translate-y-1/2 shadow-sm"
+                style={{
+                  left: `${mouseMapPos.x}px`,
+                  top: `${mouseMapPos.y}px`,
+                  width: `${
+                    tool === 'eraser'
+                      ? eraserRadius * 2
+                      : tool === 'draw'
+                      ? (drawWidth || 4) + 12
+                      : tool === 'reveal' || tool === 'hide'
+                      ? brushRadius * 2
+                      : (hazardConfig?.radius || 60) * 2
+                  }px`,
+                  height: `${
+                    tool === 'eraser'
+                      ? eraserRadius * 2
+                      : tool === 'draw'
+                      ? (drawWidth || 4) + 12
+                      : tool === 'reveal' || tool === 'hide'
+                      ? brushRadius * 2
+                      : (hazardConfig?.radius || 60) * 2
+                  }px`,
+                  borderColor:
+                    tool === 'eraser'
+                      ? '#EF4444'
+                      : tool === 'draw'
+                      ? drawColor
+                      : tool === 'hazard_fire'
+                      ? '#F97316'
+                      : tool === 'hazard_water'
+                      ? '#06B6D4'
+                      : tool === 'hazard_gas'
+                      ? '#10B981'
+                      : '#F27D26',
+                  backgroundColor:
+                    tool === 'eraser'
+                      ? 'rgba(239, 68, 68, 0.15)'
+                      : tool === 'draw'
+                      ? `${drawColor}22`
+                      : 'transparent'
+                }}
+              />
+            )}
         </div>
 
         {/* ПАНЕЛЬ БЫСТРОГО УПРАВЛЕНИЯ ЭКРАНОМ ИГРОКОВ (PLAYER VIEWPORT QUICK BAR) */}
@@ -1391,6 +2007,36 @@ export const DMView: React.FC = () => {
           setIsPolzaAiStudioOpen(false);
         }}
       />
+
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        onOpenProjector={handleOpenPlayerWindow}
+      />
+
+      {/* 6. ВСПЛЫВАЮЩИЕ УВЕДОМЛЕНИЯ ОПЕРАЦИЙ СО СТОЛОМ (TOAST HUD) */}
+      {toastNotification && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-md animate-in fade-in slide-in-from-bottom-4 duration-300 font-mono text-sm max-w-md ${
+            toastNotification.type === 'success'
+              ? 'bg-[#101F18]/95 border-emerald-500/60 text-emerald-100 shadow-emerald-950/40'
+              : toastNotification.type === 'error'
+              ? 'bg-[#221111]/95 border-rose-500/60 text-rose-100 shadow-rose-950/40'
+              : 'bg-[#151A24]/95 border-sky-500/60 text-sky-100 shadow-sky-950/40'
+          }`}
+        >
+          {toastNotification.type === 'success' && <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />}
+          {toastNotification.type === 'error' && <AlertCircle size={18} className="text-rose-400 shrink-0" />}
+          {toastNotification.type === 'info' && <InfoIcon size={18} className="text-sky-400 shrink-0" />}
+          <span className="flex-1 leading-snug">{toastNotification.message}</span>
+          <button
+            onClick={() => setToastNotification(null)}
+            className="p-1 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

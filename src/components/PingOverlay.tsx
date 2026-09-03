@@ -12,14 +12,24 @@ import { MapPing, LaserPoint } from '../types';
 interface PingOverlayProps {
   pings: MapPing[];
   laserPoints?: LaserPoint[];
+  width?: number;
+  height?: number;
 }
 
-export const PingOverlay: React.FC<PingOverlayProps> = ({ pings, laserPoints = [] }) => {
+export const PingOverlay: React.FC<PingOverlayProps> = ({
+  pings,
+  laserPoints = [],
+  width = 1920,
+  height = 1080
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    canvas.width = width;
+    canvas.height = height;
 
     let animId: number;
 
@@ -27,7 +37,7 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({ pings, laserPoints = [
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, width, height);
 
       const now = Date.now();
 
@@ -47,16 +57,16 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({ pings, laserPoints = [
 
           // Внешнее неоновое свечение
           ctx.beginPath();
-          ctx.strokeStyle = `rgba(255, 30, 30, ${alpha * 0.4})`;
-          ctx.lineWidth = 10;
+          ctx.strokeStyle = `rgba(255, 40, 40, ${alpha * 0.5})`;
+          ctx.lineWidth = 12;
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
 
           // Яркое ядро лазера
           ctx.beginPath();
-          ctx.strokeStyle = `rgba(255, 230, 230, ${alpha})`;
-          ctx.lineWidth = 3.5;
+          ctx.strokeStyle = `rgba(255, 240, 240, ${alpha})`;
+          ctx.lineWidth = 4;
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
@@ -66,10 +76,10 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({ pings, laserPoints = [
         const lastPoint = laserPoints[laserPoints.length - 1];
         if (now - lastPoint.timestamp < 1500) {
           ctx.fillStyle = '#FF0000';
-          ctx.shadowColor = '#FF0000';
+          ctx.shadowColor = '#FF2222';
           ctx.shadowBlur = 15;
           ctx.beginPath();
-          ctx.arc(lastPoint.x, lastPoint.y, 4, 0, Math.PI * 2);
+          ctx.arc(lastPoint.x, lastPoint.y, 5, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -82,16 +92,20 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({ pings, laserPoints = [
     render();
 
     return () => cancelAnimationFrame(animId);
-  }, [laserPoints]);
+  }, [laserPoints, width, height]);
 
   return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+    <div
+      className="absolute top-0 left-0 pointer-events-none overflow-hidden"
+      style={{ width: `${width}px`, height: `${height}px` }}
+    >
       {/* Холст для лазерной указки */}
       <canvas
         ref={canvasRef}
-        width={3840}
-        height={2160}
-        className="absolute top-0 left-0 w-full h-full pointer-events-none"
+        width={width}
+        height={height}
+        className="absolute top-0 left-0 pointer-events-none"
+        style={{ width: `${width}px`, height: `${height}px` }}
       />
 
       {/* Анимированные пульсирующие пинги мастера */}

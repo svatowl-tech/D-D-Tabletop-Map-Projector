@@ -7,8 +7,10 @@
  * и кнопку открытия окна проектора.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Scene, BlackoutTheme, CombatTrackerState, AudioEngineState } from '../types';
+import { musicPlayer } from '../services/musicPlayerService';
+import { appSettingsService, AppSettings } from '../services/appSettingsService';
 import {
   FolderOpen,
   Plus,
@@ -23,7 +25,8 @@ import {
   FileText,
   Dices,
   Layers,
-  ChevronDown
+  ChevronDown,
+  Settings
 } from 'lucide-react';
 
 interface DMHeaderProps {
@@ -49,6 +52,7 @@ interface DMHeaderProps {
   onOpenDiceModal: () => void;
   onOpenGeneratorStudio?: () => void;
   onOpenPolzaAiStudio?: () => void;
+  onOpenSettingsModal?: () => void;
   audioState: AudioEngineState;
 }
 
@@ -74,16 +78,37 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
   onOpenDiceModal,
   onOpenGeneratorStudio,
   onOpenPolzaAiStudio,
+  onOpenSettingsModal,
   audioState
 }) => {
   const [showBlackoutMenu, setShowBlackoutMenu] = useState(false);
+  const [musicPlaying, setMusicPlaying] = useState(musicPlayer.getState().isPlaying);
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => appSettingsService.getSettings());
 
-  const isAudioPlaying = audioState.activeBgm !== null || Object.values(audioState.ambienceChannels).some((v) => Number(v) > 0);
+  useEffect(() => {
+    const unsubMusic = musicPlayer.subscribe((s) => {
+      setMusicPlaying(s.isPlaying);
+    });
+    const unsubSettings = appSettingsService.subscribe((s) => {
+      setAppSettings(s);
+    });
+    return () => {
+      unsubMusic();
+      unsubSettings();
+    };
+  }, []);
+
+  const isAudioPlaying =
+    musicPlaying ||
+    audioState.activeBgm !== null ||
+    Object.values(audioState.ambienceChannels).some((v) => Number(v) > 0);
+
+  const { extensions } = appSettings;
 
   return (
     <header className="h-14 bg-[#111214] border-b border-[#2A2A2A] px-3 flex items-center justify-between z-30 select-none font-mono text-[#E0E0E0]">
       {/* 1. Логотип и Вкладки сцен */}
-      <div className="flex items-center gap-3 overflow-x-auto max-w-[45vw] py-1">
+      <div className="flex items-center gap-3 overflow-x-auto max-w-[40vw] py-1">
         <div className="flex items-center gap-1.5 shrink-0 pr-2 border-r border-[#2A2A2A]">
           <span className="font-extrabold text-sm tracking-tighter text-[#F27D26]">VTT-ZERO</span>
           <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#2A2A2A] text-[#8E9299] font-bold">DM</span>
@@ -118,8 +143,8 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Быстрые панели инструментов и Blackout */}
-      <div className="flex items-center gap-2">
+      {/* 2. Быстрые панели инструментов, Blackout и Настройки */}
+      <div className="flex items-center gap-1.5 sm:gap-2">
         {/* Кнопка быстрого Blackout */}
         <div className="relative">
           <button
@@ -168,77 +193,87 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
         </div>
 
         {/* Кнопка Combat Tracker */}
-        <button
-          onClick={onToggleCombat}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
-            isCombatOpen || combat.isActive
-              ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
-              : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
-          }`}
-          title="Боевой менеджер и инициатива"
-        >
-          <Swords size={13} className={combat.isActive ? 'animate-pulse text-[#F27D26]' : ''} />
-          <span>COMBAT</span>
-          {combat.combatants.length > 0 && (
-            <span className="px-1.5 py-0.2 bg-[#F27D26] text-black text-[9px] font-extrabold rounded-full">
-              {combat.combatants.length}
-            </span>
-          )}
-        </button>
+        {extensions.showCombatButton && (
+          <button
+            onClick={onToggleCombat}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
+              isCombatOpen || combat.isActive
+                ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
+                : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
+            }`}
+            title="Боевой менеджер и инициатива"
+          >
+            <Swords size={13} className={combat.isActive ? 'animate-pulse text-[#F27D26]' : ''} />
+            <span>COMBAT</span>
+            {combat.combatants.length > 0 && (
+              <span className="px-1.5 py-0.2 bg-[#F27D26] text-black text-[9px] font-extrabold rounded-full">
+                {combat.combatants.length}
+              </span>
+            )}
+          </button>
+        )}
 
         {/* Кнопка Audio Soundboard */}
-        <button
-          onClick={onToggleAudio}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
-            isAudioOpen || isAudioPlaying
-              ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
-              : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
-          }`}
-          title="Аудиопульт и эмбиент"
-        >
-          <Volume2 size={13} className={isAudioPlaying ? 'text-green-400 animate-pulse' : ''} />
-          <span>AUDIO</span>
-        </button>
+        {extensions.showAudioButton && (
+          <button
+            onClick={onToggleAudio}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
+              isAudioOpen || isAudioPlaying
+                ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
+                : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
+            }`}
+            title="Аудиопульт и эмбиент"
+          >
+            <Volume2 size={13} className={isAudioPlaying ? 'text-green-400 animate-pulse' : ''} />
+            <span>AUDIO</span>
+          </button>
+        )}
 
         {/* Кнопка SRD Reference */}
-        <button
-          onClick={onToggleSRD}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
-            isSRDOpen
-              ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
-              : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
-          }`}
-          title="Справочник D&D 5e SRD (Бестиарий, Заклинания)"
-        >
-          <BookOpen size={13} />
-          <span>SRD</span>
-        </button>
+        {extensions.showSrdButton && (
+          <button
+            onClick={onToggleSRD}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
+              isSRDOpen
+                ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
+                : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
+            }`}
+            title="Справочник D&D 5e SRD (Бестиарий, Заклинания)"
+          >
+            <BookOpen size={13} />
+            <span>SRD</span>
+          </button>
+        )}
 
         {/* Кнопка Scene Notes */}
-        <button
-          onClick={onToggleNotes}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
-            isNotesOpen
-              ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
-              : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
-          }`}
-          title="Заметки сцены и художественный текст"
-        >
-          <FileText size={13} />
-          <span>NOTES</span>
-        </button>
+        {extensions.showNotesButton && (
+          <button
+            onClick={onToggleNotes}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
+              isNotesOpen
+                ? 'bg-[#2A1F18] text-[#F27D26] border-[#F27D26]'
+                : 'bg-[#1A1C20] text-[#8E9299] hover:text-white border-[#2A2A2A]'
+            }`}
+            title="Заметки сцены и художественный текст"
+          >
+            <FileText size={13} />
+            <span>NOTES</span>
+          </button>
+        )}
 
         {/* Кнопка Dice Roller Modal */}
-        <button
-          onClick={onOpenDiceModal}
-          className="p-1.5 rounded-lg bg-[#1A1C20] hover:bg-[#252830] text-[#8E9299] hover:text-[#F27D26] border border-[#2A2A2A]"
-          title="Бросить кубики (Dices)"
-        >
-          <Dices size={15} />
-        </button>
+        {extensions.showDiceButton && (
+          <button
+            onClick={onOpenDiceModal}
+            className="p-1.5 rounded-lg bg-[#1A1C20] hover:bg-[#252830] text-[#8E9299] hover:text-[#F27D26] border border-[#2A2A2A]"
+            title="Бросить кубики (Dices)"
+          >
+            <Dices size={15} />
+          </button>
+        )}
 
         {/* Кнопка D&D Generator Studio & Reference */}
-        {onOpenGeneratorStudio && (
+        {onOpenGeneratorStudio && extensions.showDndGenButton && (
           <button
             onClick={onOpenGeneratorStudio}
             className="px-2.5 py-1.5 rounded-lg bg-[#2A1F18] hover:bg-[#3D2C20] text-[#F27D26] border border-[#F27D26]/40 text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition"
@@ -250,7 +285,7 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
         )}
 
         {/* Кнопка ИИ-Движка Polza AI Studio */}
-        {onOpenPolzaAiStudio && (
+        {onOpenPolzaAiStudio && extensions.showPolzaAiButton && (
           <button
             onClick={onOpenPolzaAiStudio}
             className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition animate-pulse"
@@ -262,7 +297,7 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
         )}
 
         {/* Кнопка рабочей папки ресурсов AetherMap_Data */}
-        {onOpenAssetFolderModal && (
+        {onOpenAssetFolderModal && extensions.showAssetFolderButton && (
           <button
             onClick={onOpenAssetFolderModal}
             className="px-2.5 py-1.5 rounded-lg bg-[#2A1F18] hover:bg-[#3D2C20] text-[#F27D26] border border-[#F27D26]/40 text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition"
@@ -274,14 +309,27 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
         )}
 
         {/* Кнопка Map Vault / Generator Studio Modal */}
-        <button
-          onClick={onOpenVaultModal}
-          className="px-2.5 py-1.5 rounded-lg bg-[#1A1C20] hover:bg-[#252830] text-[#8E9299] hover:text-[#F27D26] border border-[#2A2A2A] text-xs font-bold flex items-center gap-1.5"
-          title="Студия генераторов (Города, Здания, Таверны, Деревни, Пещеры) и Хранилище карт"
-        >
-          <Sparkles size={13} className="text-[#F27D26]" />
-          <span>MAP STUDIO</span>
-        </button>
+        {extensions.showMapStudioButton && (
+          <button
+            onClick={onOpenVaultModal}
+            className="px-2.5 py-1.5 rounded-lg bg-[#1A1C20] hover:bg-[#252830] text-[#8E9299] hover:text-[#F27D26] border border-[#2A2A2A] text-xs font-bold flex items-center gap-1.5"
+            title="Студия генераторов (Города, Здания, Таверны, Деревни, Пещеры) и Хранилище карт"
+          >
+            <Sparkles size={13} className="text-[#F27D26]" />
+            <span>MAP STUDIO</span>
+          </button>
+        )}
+
+        {/* ГЛАВНАЯ КНОПКА НАСТРОЕК (SETTINGS) */}
+        {onOpenSettingsModal && (
+          <button
+            onClick={onOpenSettingsModal}
+            className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-amber-400 border border-neutral-700 transition-colors shadow-sm"
+            title="Настройки VTT-ZERO (Польза AI, Проектор, Разрешения, Модули, Папка, Генераторы, Промпты)"
+          >
+            <Settings size={15} />
+          </button>
+        )}
 
         {/* Кнопка открытия окна проектора */}
         <button
@@ -296,3 +344,4 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
     </header>
   );
 };
+

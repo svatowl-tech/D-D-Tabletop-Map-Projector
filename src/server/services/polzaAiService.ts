@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Серверный сервис Polza AI Engine (Генератор структурированного игрового контента,
- * генератор кампаний и ИИ-генератор артов с обработкой моделей и интеграцией @google/genai SDK)
+ * генератор сюжетных кампаний и ИИ-генератор артов через Polza AI API: https://polza.ai)
  */
 
 import fs from 'fs';
 import path from 'path';
-import { GoogleGenAI } from '@google/genai';
 import {
   TextModelInfo,
   ArtModelInfo,
@@ -29,7 +28,7 @@ import {
   PolzaLoreData
 } from '../../types/polzaAi';
 
-// Инициализация директорий сохранения
+// Инициализация локальных директорий сохранения на диске
 const CAMPAIGNS_DIR = path.join(process.cwd(), 'assets', 'data', 'Campaigns');
 const AI_GENERATED_DIR = path.join(process.cwd(), 'assets', 'data', 'ai-generated');
 const ENTITIES_DIR = path.join(process.cwd(), 'assets', 'data', 'entities');
@@ -40,69 +39,198 @@ const ENTITIES_DIR = path.join(process.cwd(), 'assets', 'data', 'entities');
   }
 });
 
-// Инициализация Gemini SDK (Серверный контекст)
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+// Конфигурация Polza AI API (OpenAI-совместимый REST интерфейс)
+const POLZA_API_BASE_URL = process.env.POLZA_API_BASE_URL || 'https://api.polza.ai/v1';
+
+function getPolzaApiKey(): string | null {
+  const key = process.env.POLZA_API_KEY || process.env.POLZA_AI_API_KEY;
+  if (!key || key.trim() === '' || key === 'MY_POLZA_API_KEY') {
     return null;
   }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build'
+  return key.trim();
+}
+
+/**
+ * Вызов текстовых моделей Polza AI (Chat Completions) с поддержкой каскадного переключения моделей
+ */
+async function callPolzaChatCompletion(
+  models: string[],
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  temperature: number = 0.7,
+  timeoutPerModelMs: number = 12000,
+  apiKeyOverride?: string
+): Promise<{ text: string; reasoning?: string } | null> {
+  const apiKey = (apiKeyOverride && apiKeyOverride.trim()) || getPolzaApiKey();
+  if (!apiKey) {
+    return null;
+  }
+
+  for (const model of models) {
+    const perModelTimeout = model.includes('r1') ? Math.min(timeoutPerModelMs, 18000) : timeoutPerModelMs;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), perModelTimeout);
+
+    try {
+      const response = await fetch(`${POLZA_API_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          max_tokens: 2500
+        }),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.warn(`[Polza AI] Model ${model} returned HTTP ${response.status}: ${errorText.slice(0, 120)}`);
+        continue;
       }
+
+      const data = await response.json();
+      const choice = data?.choices?.[0];
+      const content = choice?.message?.content || '';
+      const reasoning = choice?.message?.reasoning_content || choice?.message?.reasoning || undefined;
+
+      if (content) {
+        return { text: content, reasoning };
+      }
+    } catch (err: any) {
+      console.warn(`[Polza AI] Querying ${model} ended with:`, err?.name === 'AbortError' ? 'Timeout (skipping to next fast model)' : (err?.message || err));
+    } finally {
+      clearTimeout(timeoutId);
     }
-  });
+  }
+
+  return null;
+}
+
+/**
+ * Генерация изображений через Polza AI Image API
+ */
+async function callPolzaImageGeneration(
+  prompt: string,
+  model: string = 'tongyi-mai/z-image',
+  size: string = '1024x1024'
+): Promise<Buffer | null> {
+  const apiKey = getPolzaApiKey();
+  if (!apiKey) {
+    return null;
+  }
+
+  const imageModelsToTry = [
+    model,
+    'tongyi-mai/z-image',
+    'bytedance/seedream-4',
+    'black-forest-labs/flux-1-schnell',
+    'dall-e-3'
+  ];
+
+  for (const imgModel of Array.from(new Set(imageModelsToTry))) {
+    try {
+      const response = await fetch(`${POLZA_API_BASE_URL}/images/generations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: imgModel,
+          prompt,
+          size,
+          response_format: 'b64_json'
+        })
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        console.warn(`[Polza AI Art] Image model ${imgModel} returned HTTP ${response.status}: ${errText.slice(0, 100)}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const imageItem = data?.data?.[0];
+
+      if (imageItem?.b64_json) {
+        return Buffer.from(imageItem.b64_json, 'base64');
+      }
+
+      if (imageItem?.url) {
+        const imgDownload = await fetch(imageItem.url);
+        if (imgDownload.ok) {
+          const arrayBuf = await imgDownload.arrayBuffer();
+          return Buffer.from(arrayBuf);
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Polza AI Art] Error generating with ${imgModel}:`, e?.message || e);
+    }
+  }
+
+  return null;
 }
 
 export class PolzaAiService {
   /**
-   * Список текстовых ИИ моделей
+   * Список доступных текстовых моделей Polza AI
    */
   public getTextModels(): TextModelInfo[] {
     return [
       {
-        id: 'deepseek/deepseek-r1-distill-llama-70b',
-        name: 'DeepSeek R1 Distill Llama 70B',
-        provider: 'DeepSeek / Meta',
-        description: 'Флагманская модель с глубоким блоком рассуждений <think> и строгой математикой D&D 5e.',
-        supportsReasoning: true,
+        id: 'openai/gpt-4o-mini',
+        name: 'OpenAI GPT-4o Mini',
+        provider: 'OpenAI (Polza AI)',
+        description: 'Сверхбыстрая компактная модель для генерации точного D&D 5e JSON без задержек.',
+        supportsReasoning: false,
         isDefault: true
-      },
-      {
-        id: 'google/gemma-3-27b-it',
-        name: 'Google Gemma 3 27B IT',
-        provider: 'Google',
-        description: 'Высокоскоростная модель Google для глубокого описания атмосферы и отыгрыша.',
-        supportsReasoning: false
-      },
-      {
-        id: 'openai/gpt-oss-20b',
-        name: 'OpenAI GPT OSS 20B',
-        provider: 'OpenAI',
-        description: 'Оптимизированная открытая модель для создания заклинаний и домашних правил.',
-        supportsReasoning: false
       },
       {
         id: 'deepseek/deepseek-chat',
         name: 'DeepSeek Chat V3',
-        provider: 'DeepSeek',
-        description: 'Отлично подходит для генерации длинных сюжетных квестов и ролевых диалогов.',
+        provider: 'DeepSeek (Polza AI)',
+        description: 'Отлично подходит для генерации длинных сюжетных квестов, диалогов и атмосферы.',
+        supportsReasoning: false,
+        isDefault: false
+      },
+      {
+        id: 'qwen/qwen-2.5-72b-instruct',
+        name: 'Qwen 2.5 72B Instruct',
+        provider: 'Alibaba Cloud (Polza AI)',
+        description: 'Мощная мультиязычная модель для детализированного описания игрового лора и правил.',
+        supportsReasoning: false
+      },
+      {
+        id: 'deepseek/deepseek-r1-distill-llama-70b',
+        name: 'DeepSeek R1 Distill Llama 70B',
+        provider: 'DeepSeek / Meta (Polza AI)',
+        description: 'Модель с блоком глубоких рассуждений <think> (требует дополнительного времени).',
+        supportsReasoning: true,
+        isDefault: false
+      },
+      {
+        id: 'meta-llama/llama-3.3-70b-instruct',
+        name: 'Llama 3.3 70B Instruct',
+        provider: 'Meta (Polza AI)',
+        description: 'Быстрая и точная ролевая генерация NPC, боевых энкаунтеров и лута.',
         supportsReasoning: false
       },
       {
         id: 'openai/gpt-4o',
-        name: 'GPT-4o Multimodal',
-        provider: 'OpenAI',
-        description: 'Универсальная мультимодальная модель высокого уровня.',
+        name: 'OpenAI GPT-4o',
+        provider: 'OpenAI (Polza AI)',
+        description: 'Флагманская модель высшего уровня для сложных сюжетных кампаний.',
         supportsReasoning: true
       }
     ];
   }
 
   /**
-   * Список визуальных ИИ моделей для артов
+   * Список доступных визуальных моделей Polza AI для артов и токенов
    */
   public getImageModels(): ArtModelInfo[] {
     return [
@@ -113,27 +241,27 @@ export class PolzaAiService {
         isDefault: true
       },
       {
-        id: 'google/gemini-2.5-flash-image',
-        name: 'Google Gemini Flash Image',
-        description: 'Быстрая и точная генерация иллюстраций книг правил и пейзажей.',
-        isDefault: false
-      },
-      {
         id: 'bytedance/seedream-4',
         name: 'ByteDance SeaDream 4',
         description: 'Художественная живопись, мрачный гримдарк и акварельные иллюстрации.',
         isDefault: false
       },
       {
+        id: 'black-forest-labs/flux-1-schnell',
+        name: 'FLUX.1 Schnell',
+        description: 'Сверхбыстрая фотореалистичная и фэнтези генерация пейзажей и существ.',
+        isDefault: false
+      },
+      {
         id: 'gpt-image-1',
         name: 'GPT-Image Token Studio',
-        description: 'Специализируется на изометрических токенах с прозрачным фоном.',
+        description: 'Специализируется на изометрических токенах с изолированным фоном.',
         supportsTransparentToken: true
       },
       {
         id: 'dall-e-3',
         name: 'DALL-E 3 Masterpiece',
-        description: 'Высококачественная классическая фэнтези живопись.',
+        description: 'Высококачественная классическая фэнтези живопись и обложки книг.',
         isDefault: false
       }
     ];
@@ -142,7 +270,10 @@ export class PolzaAiService {
   /**
    * Автоматическая компиляция детального англоязычного промпта на основе сущности и стиля
    */
-  public compileArtPrompt(entity: { type: string; name: string; race?: string; description?: string; details?: string }, stylePreset: ArtStylePreset): { prompt: string; optimalSize: string } {
+  public compileArtPrompt(
+    entity: { type: string; name: string; race?: string; description?: string; details?: string },
+    stylePreset: ArtStylePreset
+  ): { prompt: string; optimalSize: string } {
     let styleDescription = '';
     let size = '1024x1024';
 
@@ -193,18 +324,27 @@ export class PolzaAiService {
   }
 
   /**
-   * Центральная генерация структурированного JSON (Monsters, NPCs, Locations, Items, Spells, Quests, Rules, Lore)
+   * Центральная генерация структурированного JSON (Monsters, NPCs, Locations, Items, Spells, Quests, Rules, Lore) через Polza AI
    */
-  public async generateJsonEntity(request: GenerateJsonOptions, modelId: string = 'deepseek/deepseek-r1-distill-llama-70b'): Promise<GenerateJsonResponse> {
-    const ai = getGeminiClient();
+  public async generateJsonEntity(
+    request: GenerateJsonOptions,
+    modelId: string = 'openai/gpt-4o-mini',
+    customOverrides?: {
+      systemPrompt?: string;
+      temperature?: number;
+      apiKey?: string;
+      timeoutMs?: number;
+    }
+  ): Promise<GenerateJsonResponse> {
     const entityType = request.entityType;
 
-    // Промпт для ИИ
-    const systemPrompt = `You are a master D&D 5e game designer and system architect.
+    const defaultSystemPrompt = `You are a master D&D 5e game designer and system architect.
 Generate a strictly valid JSON object representing a D&D 5e entity of type "${entityType}".
 Language requirement: Russian text for description and flavor, English for "englishName".
 Follow exact D&D 5e mechanics (AC, HP hit dice formulas, proficiency bonus based on CR, ability score modifiers).
 If reasoning is required, wrap your thought process in <think> reasoning notes </think> before the JSON.`;
+
+    const systemPrompt = customOverrides?.systemPrompt || defaultSystemPrompt;
 
     let userPromptText = `Create a ${entityType} based on request: "${request.userPrompt}".`;
     if (request.cr) userPromptText += ` Challenge Rating (CR): ${request.cr}.`;
@@ -215,46 +355,50 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
     let rawOutput = '';
     let reasoning = '';
 
-    if (ai) {
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.7-flash',
-          contents: `${systemPrompt}\n\n${userPromptText}`,
-          config: {
-            temperature: 0.7,
-            systemInstruction: systemPrompt
-          }
-        });
-        rawOutput = response.text || '';
-      } catch (err) {
-        console.warn('Gemini API call warning, falling back to algorithmic rule engine:', err);
+    const modelsChain = [
+      modelId || 'openai/gpt-4o-mini',
+      'openai/gpt-4o-mini'
+    ].filter((v, i, a) => a.indexOf(v) === i);
+
+    const polzaResult = await callPolzaChatCompletion(
+      modelsChain,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPromptText }
+      ],
+      customOverrides?.temperature !== undefined ? customOverrides.temperature : 0.7,
+      customOverrides?.timeoutMs || 7500,
+      customOverrides?.apiKey
+    );
+
+    if (polzaResult) {
+      rawOutput = polzaResult.text;
+      if (polzaResult.reasoning) {
+        reasoning = polzaResult.reasoning;
       }
     }
 
-    // Если нет ответа от API или офлайн — используем наш точный математический генератор D&D 5e
     let jsonData: any = null;
 
     if (rawOutput) {
-      // Извлекаем блок рассуждений <think>
       const thinkMatch = rawOutput.match(/<think>([\s\S]*?)<\/think>/i);
       if (thinkMatch) {
-        reasoning = thinkMatch[1].trim();
+        reasoning = reasoning ? `${reasoning}\n\n${thinkMatch[1].trim()}` : thinkMatch[1].trim();
         rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
       }
 
-      // Извлекаем JSON из markdown ```json ... ```
       const jsonMatch = rawOutput.match(/```json\s*([\s\S]*?)\s*```/i) || rawOutput.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
           jsonData = JSON.parse(jsonMatch[1] || jsonMatch[0]);
         } catch (e) {
-          console.warn('Failed to parse model JSON output, building structured fallback:', e);
+          console.warn('[Polza AI] Failed to parse JSON, applying algorithmic validator:', e);
         }
       }
     }
 
     if (!jsonData) {
-      reasoning = `[AI Engine Reasoning (${modelId})]:\n1. Расчет математики D&D 5e по CR / уровням.\n2. Генерация уникальных черт, тактики боя и сюжетных зацепок.\n3. Валидация параметров спасбросков и урона.`;
+      reasoning = reasoning || `[Polza AI Engine Reasoning (${modelId})]:\n1. Расчет математики D&D 5e по CR и уровням.\n2. Генерация уникальных черт, тактики боя и сюжетных зацепок.\n3. Валидация параметров спасбросков и урона.`;
       jsonData = this.createFallbackStructuredEntity(request);
     }
 
@@ -288,9 +432,39 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
   }
 
   /**
-   * Алгоритмический генератор точных структурированных объектов D&D 5e
+   * Генерация безопасного fallback ответа сущности при ошибках сети или таймаутах
    */
-  private createFallbackStructuredEntity(options: GenerateJsonOptions): any {
+  public createFallbackJsonResult(options: GenerateJsonOptions, warning?: string): GenerateJsonResponse {
+    const jsonData = this.createFallbackStructuredEntity(options);
+    const filename = `${options.entityType}_${Date.now()}.json`;
+    const savedFilePath = path.join(ENTITIES_DIR, filename);
+    try {
+      fs.writeFileSync(savedFilePath, JSON.stringify(jsonData, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('Could not save fallback entity file:', e);
+    }
+    const imagePromptObj = this.compileArtPrompt(
+      {
+        type: options.entityType,
+        name: jsonData.name || options.userPrompt,
+        description: jsonData.flavor || jsonData.description || ''
+      },
+      'dnd_cinematic'
+    );
+    return {
+      success: true,
+      entityType: options.entityType,
+      jsonData,
+      reasoning: `[D&D 5e Rulebook Engine]: ${warning || 'Сгенерировано по математическим правилам D&D 5e (быстрый режим)'}`,
+      imagePrompt: imagePromptObj.prompt,
+      savedFilePath: `/api/assets/file/data/entities/${filename}`
+    };
+  }
+
+  /**
+   * Алгоритмический генератор точных структурированных объектов D&D 5e (Fallback при отсутствии сети)
+   */
+  public createFallbackStructuredEntity(options: GenerateJsonOptions): any {
     const prompt = options.userPrompt || 'Безымянная сущность';
     const id = `entity_${Date.now()}`;
 
@@ -327,7 +501,7 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
           traits: [
             {
               name: 'Кислотная Кровь',
-              desc: 'Когда существую наносится колющий или рубящий урон в пределах 5 фт., нападающий получает 2d6 урона кислотой.'
+              desc: 'Когда существу наносится колющий или рубящий урон в пределах 5 фт., нападающий получает 2d6 урона кислотой.'
             },
             {
               name: 'Засада Тенью',
@@ -422,42 +596,48 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
           name: prompt,
           englishName: 'Amulet of the Eclipse',
           category: 'Wondrous Item',
-          rarity: 'Rare',
+          rarity: (options.rarity as any) || 'Rare',
           attunementRequired: true,
           attunementDetails: 'Требуется настройка заклинателем',
           activeAbilities: [
             {
-              name: 'Теневой Шаг',
+              name: 'Теневое Затмение',
               cost: '1 заряд',
-              effect: 'Телепортация на 30 фт. из одной тени в другую действием.'
+              effect: 'Накладывает заклинание Тьма с радиусом 20 футов.'
             }
           ],
-          passiveBonuses: ['+1 к СЛ спасбросков ваших заклинаний школы Иллюзии'],
+          passiveBonuses: ['Сопротивление урону холодом и некротической энергией (+1 к КД во тьме)'],
           charges: {
             maxCharges: 3,
-            rechargeFormula: '1d3 заряда на рассвете'
+            rechargeFormula: '1d3 на закате'
           },
-          description: 'Амулет из темного серебра с мерцающим черным ониксом в центре.',
-          lore: 'Создан мастерами теневой магии в эпоху Кровавого Затмения.',
+          description: 'Серебряный амулет с глубоким сапфиром, пульсирующим холодным светом.',
+          lore: 'Был выкован древними магами для защиты от инквизиторов.',
           valueGp: 1500
         } as PolzaMagicItemData;
       }
 
       case 'spell': {
+        const lvl = options.spellLevel !== undefined ? options.spellLevel : 3;
         return {
           id,
           name: prompt,
-          englishName: 'Shadow Burst',
-          level: options.spellLevel || 3,
-          school: 'Воплощение (Evocation)',
-          components: { verbal: true, somatic: true, material: false },
-          range: '60 футов',
+          englishName: 'Shadow Nova',
+          level: lvl,
+          school: 'Некромантия',
           castingTime: '1 действие',
+          range: '60 футов (сфера радиусом 20 фт)',
+          components: {
+            verbal: true,
+            somatic: true,
+            material: true,
+            materialDescription: 'щепотка кладбищенской земли'
+          },
           duration: 'Мгновенная',
           concentration: false,
-          description: 'Вы высвобождаете сферу тьмы. Каждое существо в сфере 20 фт. должно совершить спасбросок Телосложения.',
-          higherSlotsScaling: 'Урон увеличивается на 1d8 за каждый уровень ячейки выше 3-го.',
-          damageOrEffect: '4d8 урона некротической энергией при провале'
+          description: `Волна темного пламени взрывается в указанной точке. Каждое существо в сфере совершает спасбросок Ловкости. При провале цель получает ${lvl + 2}d8 урона некротической энергией, или половину при успехе.`,
+          higherSlotsScaling: `При сотворении ячейкой ${lvl + 1}-го уровня или выше урон увеличивается на 1d8 за каждый уровень ячейки.`,
+          damageOrEffect: `${lvl + 2}d8 урона некротической энергией`
         } as PolzaSpellData;
       }
 
@@ -465,24 +645,24 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
         return {
           id,
           title: prompt,
-          englishTitle: 'Shadow over the Frontier',
-          giverNpc: 'Староста деревни Элдон',
-          synopsis: 'В окрестностях участились нападения неизвестных существ.',
+          englishTitle: 'The Vanished Caravan',
+          giverNpc: 'Алхимик Грегор',
+          synopsis: 'Повозка с редкими ингредиентами затерялась у Старого Моста.',
           objectives: [
-            { id: '1', description: 'Разведать древний заброшенный грот', status: 'Active' },
-            { id: '2', description: 'Обезвредить источник темной магии', status: 'Active' },
-            { id: '3', description: 'Спасти пропавшего кузнеца', status: 'Optional', optional: true }
+            { id: '1', description: 'Осмотреть место нападения у моста', status: 'Active' },
+            { id: '2', description: 'Найти логово гоблинов в пещере', status: 'Active' },
+            { id: '3', description: 'Вернуть похищенные колбы алхимику', status: 'Active' }
           ],
           rewards: {
-            goldGp: 350,
-            exp: 1200,
-            items: ['Зелье Лечения (2 шт.)', 'Карта старых рудников'],
-            factionReputation: '+10 к репутации в Гильдии Искателей'
+            goldGp: 250,
+            exp: 600,
+            items: ['Зелье Высшего Лечения', 'Свиток Опознания'],
+            factionReputation: '+10 у Гильдии Алхимиков'
           },
-          plotTwists: ['Кузнец сам создал темный ритуал по ошибке!'],
+          plotTwists: ['Гоблины использовали ингредиенты для исцеления своего раненого вождя.'],
           consequences: {
-            success: 'Деревня спасена, торговый путь открыт.',
-            failure: 'Существа захватывают мельницу.'
+            success: 'Цены на зелья в городе снижаются на 20%.',
+            failure: 'В городе начинается дефицит антидотов.'
           }
         } as PolzaQuestData;
       }
@@ -491,16 +671,15 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
         return {
           id,
           title: prompt,
-          triggerCondition: 'Когда персонаж получает критический урон или опускается до 0 HP',
-          checkFormulas: 'Проверка Мудрости (Спасбросок) DC 10 + полученный урон / 5',
+          triggerCondition: 'Когда существо совершает атаку ближнего боя против персонажа',
+          checkFormulas: 'Спасбросок Ловкости или бросок акробатики против броска атаки',
           multiStageEffects: [
-            { stage: 1, name: 'Легкое потрясение', effect: 'Помеха на проверки Нанимательности' },
-            { stage: 2, name: 'Теневой галлюциноз', effect: 'Персонаж видит ложные тени' },
-            { stage: 3, name: 'Полное безумие', effect: 'Временный переход под контроль DM' }
+            { stage: 1, name: 'Парирование', effect: '+2 к КД против этой атаки' },
+            { stage: 2, name: 'Контратака', effect: 'При промахе врага персонаж может совершить быструю атаку кинжалом' }
           ],
-          recoveryMethods: 'Долгий отдых в безопасном месте или заклинание Высшее Восстановление',
-          dmTips: 'Используйте правило для нагнетания готической атмосферы и хоррора.',
-          description: 'Домашнее правило для механики стресса и безумия.'
+          recoveryMethods: 'Перезаряжается в начале вашего следующего хода',
+          dmTips: 'Делает дуэли более зрелищными и динамичными для легких классов.',
+          description: 'Правило динамического фехтования и парирования в ближнем бою.'
         } as PolzaRuleData;
       }
 
@@ -508,16 +687,16 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
         return {
           id,
           title: prompt,
-          category: 'Исторические события и Лор',
-          markdownContent: `# ${prompt}\n\n## Предыстория\nЭпоха Кровавого Затмения ознаменовалась падением древних цитаделей магов.\n\n### Ключевые события\n- Строительство Теневой Цитадели\n- Раскол Гильдии Алхимиков`,
+          category: 'История и мифы',
+          markdownContent: `## ${prompt}\n\nЛегенда о падении небесной цитадели Арканис и её тайных реликвиях.`,
           historicalTimeline: [
-            { yearOrEra: '342 г. Эры Дракона', event: 'Основание Первого Совета' },
-            { yearOrEra: '410 г. Эры Дракона', event: 'Кровавое Затмение Драговии' }
+            { yearOrEra: 'Эпоха Первого Раскола', event: 'Основание парящей цитадели Арканис' },
+            { yearOrEra: 'Год Кровавой Луны (1350 г.)', event: 'Катастрофа и перенос цитадели в Теневой План' }
           ],
-          secretLore: 'Совет старейшин знал о приближении катастрофы за 10 лет.',
+          secretLore: 'Цитадель не упала, а была телепортирована в Теневой План древним архимагом.',
           factionConnections: [
-            { factionName: 'Орден Серебряной Зари', relation: 'Союзники и хранители тайн' },
-            { factionName: 'Культ Черного Солнца', relation: 'Заклятые враги' }
+            { factionName: 'Орден Серебряной Зари', relation: 'Ищет утерянные свитки цитадели' },
+            { factionName: 'Братство Вуали', relation: 'Охраняет вход в разлом' }
           ]
         } as PolzaLoreData;
       }
@@ -528,176 +707,206 @@ If reasoning is required, wrap your thought process in <think> reasoning notes <
   }
 
   /**
-   * Генерация полноценной сюжетной кампании (FULL CAMPAIGN ENGINE)
+   * Полноценный структурированный генератор кампании D&D 5e (надежный офлайн/fallback режим)
    */
-  public async generateCampaign(options: CampaignGeneratorOptions): Promise<GeneratedCampaign> {
-    const ai = getGeminiClient();
+  public createFallbackCampaign(options: Partial<CampaignGeneratorOptions>): GeneratedCampaign {
     const timestamp = Date.now();
     const campaignId = `campaign-ai-${timestamp}`;
 
-    let campaignData: GeneratedCampaign | null = null;
+    return {
+      id: campaignId,
+      name: options.title || 'Кровавое Затмение Драговии',
+      system: options.system || 'D&D 5e',
+      setting: options.setting || 'Готический хоррор',
+      tone: options.tone || 'Мрачная атмосфера и психологическое напряжение',
+      partyLevel: options.partyLevel || '1-3',
+      calendarAndWeather: {
+        exactDate: '14 Лордеп, 1492 г. ЛД',
+        season: 'Поздняя осень',
+        temperature: '+4°C (Прохладно и туманно)',
+        moonPhase: 'Убывающий серп (Кровавая луна)',
+        weatherDescription: 'Густой липкий туман стелется над холмами, моросит холодный дождь.'
+      },
+      quests: {
+        mainQuest: {
+          id: 'mq_1',
+          title: 'Тайна Замка Драговия',
+          englishTitle: 'Secrets of Castle Dragovia',
+          giverNpc: 'Граф Ваэлин',
+          synopsis: 'Партия получает приглашение на званый ужин, который оказывается ловушкой.',
+          objectives: [
+            { id: '1', description: 'Проникнуть в замок под видом гостей', status: 'Active' },
+            { id: '2', description: 'Найти потайной ход в склеп', status: 'Active' },
+            { id: '3', description: 'Уничтожить ритуальный кристалл', status: 'Active' }
+          ],
+          rewards: {
+            goldGp: 1000,
+            exp: 2500,
+            items: ['Меч Теневого Касания +1', 'Амулет Затмения'],
+            factionReputation: '+20 в Ордене Серебряной Зари'
+          },
+          plotTwists: ['Граф-вампир — это настоящий отец одного из героев!'],
+          consequences: {
+            success: 'Освобождение провинции от древнего проклятия.',
+            failure: 'Затмение становится вечным.'
+          }
+        },
+        sideQuests: [
+          {
+            id: 'sq_1',
+            title: 'Пропавший караван алхимиков',
+            englishTitle: 'The Vanished Caravan',
+            giverNpc: 'Алхимик Грегор',
+            synopsis: 'Повозка с редкими ингредиентами затерялась у Старого Моста.',
+            objectives: [
+              { id: '1', description: 'Осмотреть место нападения у моста', status: 'Active' },
+              { id: '2', description: 'Вернуть колбы с эликсиром', status: 'Active' }
+            ],
+            rewards: { goldGp: 200, exp: 500, items: ['2x Зелье Лечения'], factionReputation: '+5 у Торговцев' },
+            plotTwists: ['Ингредиенты украли не бандиты, а разумные гоблины-травники.'],
+            consequences: { success: 'Алхимик открывает торговлю со скидкой 20%.', failure: 'Дефицит зелий в городе.' }
+          }
+        ]
+      },
+      npcGraph: [
+        {
+          id: 'npc_1',
+          name: 'Граф Ваэлин Драговия',
+          role: 'Правитель замка / Главный антагонист',
+          attitude: 'Враждебный',
+          connections: [
+            {
+              targetNpcId: 'npc_2',
+              targetNpcName: 'Леди Эвелина',
+              relationType: 'traitor',
+              description: 'Тайно готовит заговор против графа'
+            }
+          ]
+        },
+        {
+          id: 'npc_2',
+          name: 'Леди Эвелина',
+          role: 'Сестра графа / Потенциальный союзник',
+          attitude: 'Настороженный',
+          connections: [
+            {
+              targetNpcId: 'npc_1',
+              targetNpcName: 'Граф Ваэлин Драговия',
+              relationType: 'enemy',
+              description: 'Хочет свергнуть тирана'
+            }
+          ]
+        }
+      ],
+      factions: [
+        {
+          id: 'fac_1',
+          name: 'Орден Серебряной Зари',
+          influenceSphere: 'Стража города, храмы, защита от нежити',
+          leader: 'Инквизитор Малакай',
+          goals: 'Искоренение магии крови и нежити',
+          attitudeToParty: 'Дружелюбный'
+        },
+        {
+          id: 'fac_2',
+          name: 'Братство Вуали',
+          influenceSphere: 'Теневые рынки, контрабанда, шпионаж',
+          leader: 'Тень-Без-Имени',
+          goals: 'Контроль над древними артефактами замка',
+          attitudeToParty: 'Нейтральный'
+        }
+      ],
+      sessionChronicles: {
+        starterScenario: 'Сессия 0/1: Дорога в Тумане. Герои сходятся в таверне «Старый Очаг», когда двери распахиваются от ночного порыва ветра...',
+        lazyDmNotes: {
+          charactersToHighlight: ['Паладин (Орден)', 'Следопыт (Знание лесов)'],
+          strongStart: 'Нападение стаи теневых волков прямо на постоялый двор!',
+          potentialScenes: ['Встреча с бродячим торговцем', 'Осмотр заброшенной часовни'],
+          secretsAndClues: [
+            'Старый мост заминирован растяжками',
+            'У графа аллергия на серебряную пыль'
+          ],
+          importantLocations: ['Таверна Старый Очаг', 'Старый Мост', 'Врата Замка']
+        }
+      },
+      starterParty: [
+        { name: 'Аэрон Серебряный Клинок', raceClass: 'Человек Паладин', level: 1, ac: 18, hp: 12, stats: 'СИЛ 16, ЛОВ 10, ТЕЛ 14, ИНТ 8, МУД 12, ХАР 14', keyEquipment: 'Латы, Щит, Длинный меч' },
+        { name: 'Лира Теневой Шаг', raceClass: 'Полуэльф Плут', level: 1, ac: 14, hp: 9, stats: 'СИЛ 10, ЛОВ 16, ТЕЛ 12, ИНТ 13, МУД 10, ХАР 14', keyEquipment: 'Кожаный доспех, Два кинжала, Воровские инструменты' },
+        { name: 'Элдорас Мглистый', raceClass: 'Высший Эльф Волшебник', level: 1, ac: 12, hp: 7, stats: 'СИЛ 8, ЛОВ 14, ТЕЛ 12, ИНТ 16, МУД 13, ХАР 10', keyEquipment: 'Книга заклинаний, Фокусировка, Кинжал' },
+        { name: 'Боргрим Громовой Щит', raceClass: 'Дворф Жрец', level: 1, ac: 16, hp: 11, stats: 'СИЛ 14, ЛОВ 8, ТЕЛ 16, ИНТ 10, МУД 16, ХАР 10', keyEquipment: 'Кольчуга, Боевой молот, Священный символ' }
+      ],
+      groupTreasuryAndSafety: {
+        startingPurse: { gp: 60, sp: 120, cp: 300 },
+        homebrewRules: [
+          'Быстрое питье зелий (Бонусное действие)',
+          'Критический урон = Максимальный урон кости + бросок second dice'
+        ],
+        linesAndVeils: {
+          lines: ['Пытки и жестокость к детям', 'Вредоносное поведение внутри партии'],
+          veils: ['Подробные сцены пыток (за кадром)', 'Кровавые анатомические детали']
+        }
+      },
+      createdAt: new Date().toISOString()
+    };
+  }
 
-    if (ai) {
-      try {
-        const promptText = `Generate a full D&D 5e campaign in JSON format with title "${options.title}".
+  /**
+   * Генерация полноценной сюжетной кампании (FULL CAMPAIGN ENGINE) через Polza AI
+   */
+  public async generateCampaign(
+    options: CampaignGeneratorOptions,
+    customOverrides?: {
+      systemPrompt?: string;
+      temperature?: number;
+      apiKey?: string;
+      timeoutMs?: number;
+    }
+  ): Promise<GeneratedCampaign> {
+    const timestamp = Date.now();
+    const campaignId = `campaign-ai-${timestamp}`;
+
+    const promptText = `Generate a full D&D 5e campaign in strictly valid JSON format with title "${options.title}".
 Setting: ${options.setting}. Tone: ${options.tone}. Level: ${options.partyLevel}. Villain Hook: ${options.villainHook}.
 Include: Calendar & weather, Main quest + 2 side quests, NPC relationship graph, 3 factions, Session 0/1 Lazy DM chronicle, 4 Starter Party heroes, Group Treasury & Lines & Veils.`;
 
-        const res = await ai.models.generateContent({
-          model: 'gemini-3.7-flash',
-          contents: promptText,
-          config: { temperature: 0.8 }
-        });
+    const systemPrompt = customOverrides?.systemPrompt ||
+      'You are an expert D&D 5e Campaign Architect. Return only valid JSON formatted campaign data in Russian with English keys/titles where specified.';
 
-        const jsonMatch = res.text?.match(/```json\s*([\s\S]*?)\s*```/i) || res.text?.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          campaignData = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+    const polzaResult = await callPolzaChatCompletion(
+      ['openai/gpt-4o-mini'],
+      [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        { role: 'user', content: promptText }
+      ],
+      customOverrides?.temperature !== undefined ? customOverrides.temperature : 0.7,
+      customOverrides?.timeoutMs || 7500,
+      customOverrides?.apiKey
+    );
+
+    let campaignData: GeneratedCampaign | null = null;
+
+    if (polzaResult && polzaResult.text) {
+      const jsonMatch = polzaResult.text.match(/```json\s*([\s\S]*?)\s*```/i) || polzaResult.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+          campaignData = parsed.campaign || parsed;
+          if (campaignData && !campaignData.id) campaignData.id = campaignId;
+        } catch (e) {
+          console.warn('[Polza AI] Failed to parse campaign JSON from AI, using structured campaign builder:', e);
         }
-      } catch (e) {
-        console.warn('Gemini campaign generation fallback triggered:', e);
       }
     }
 
     if (!campaignData) {
-      campaignData = {
-        id: campaignId,
-        name: options.title || 'Кровавое Затмение Драговии',
-        system: options.system || 'D&D 5e',
-        setting: options.setting || 'Готический хоррор',
-        tone: options.tone || 'Мрачная атмосфера и психологическое напряжение',
-        partyLevel: options.partyLevel || '1-3',
-        calendarAndWeather: {
-          exactDate: '14 Лордеп, 1492 г. ЛД',
-          season: 'Поздняя осень',
-          temperature: '+4°C (Прохладно и туманно)',
-          moonPhase: 'Убывающий серп (Кровавая луна)',
-          weatherDescription: 'Густой липкий туман стелется над холмами, моросит холодный дождь.'
-        },
-        quests: {
-          mainQuest: {
-            id: 'mq_1',
-            title: 'Тайна Замка Драговия',
-            englishTitle: 'Secrets of Castle Dragovia',
-            giverNpc: 'Граф Ваэлин',
-            synopsis: 'Партия получает приглашение на званый ужин, который оказывается ловушкой.',
-            objectives: [
-              { id: '1', description: 'Проникнуть в замок под видом гостей', status: 'Active' },
-              { id: '2', description: 'Найти потайной ход в склеп', status: 'Active' },
-              { id: '3', description: 'Уничтожить ритуальный кристалл', status: 'Active' }
-            ],
-            rewards: {
-              goldGp: 1000,
-              exp: 2500,
-              items: ['Меч Теневого Касания +1', 'Амулет Затмения'],
-              factionReputation: '+20 в Ордене Серебряной Зари'
-            },
-            plotTwists: ['Граф-вампир — это настоящий отец одного из героев!'],
-            consequences: {
-              success: 'Освобождение провинции от древнего проклятия.',
-              failure: 'Затмение становится вечным.'
-            }
-          },
-          sideQuests: [
-            {
-              id: 'sq_1',
-              title: 'Пропавший караван алхимиков',
-              englishTitle: 'The Vanished Caravan',
-              giverNpc: 'Алхимик Грегор',
-              synopsis: 'Повозка с редкими ингредиентами затерялась у Старого Моста.',
-              objectives: [
-                { id: '1', description: 'Осмотреть место нападения у моста', status: 'Active' },
-                { id: '2', description: 'Вернуть колбы с эликсиром', status: 'Active' }
-              ],
-              rewards: { goldGp: 200, exp: 500, items: ['2x Зелье Лечения'], factionReputation: '+5 у Торговцев' },
-              plotTwists: ['Ингредиенты украли не бандиты, а разумные гоблины-травники.'],
-              consequences: { success: 'Алхимик открывает торговлю со скидкой 20%.', failure: 'Дефицит зелий в городе.' }
-            }
-          ]
-        },
-        npcGraph: [
-          {
-            id: 'npc_1',
-            name: 'Граф Ваэлин Драговия',
-            role: 'Правитель замка / Главный антагонист',
-            attitude: 'Враждебный',
-            connections: [
-              {
-                targetNpcId: 'npc_2',
-                targetNpcName: 'Леди Эвелина',
-                relationType: 'traitor',
-                description: 'Тайно готовит заговор против графа'
-              }
-            ]
-          },
-          {
-            id: 'npc_2',
-            name: 'Леди Эвелина',
-            role: 'Сестра графа / Потенциальный союзник',
-            attitude: 'Настороженный',
-            connections: [
-              {
-                targetNpcId: 'npc_1',
-                targetNpcName: 'Граф Ваэлин Драговия',
-                relationType: 'enemy',
-                description: 'Хочет свергнуть тирана'
-              }
-            ]
-          }
-        ],
-        factions: [
-          {
-            id: 'fac_1',
-            name: 'Орден Серебряной Зари',
-            influenceSphere: 'Стража города, храмы, защита от нежити',
-            leader: 'Инквизитор Малакай',
-            goals: 'Искоренение магии крови и нежити',
-            attitudeToParty: 'Дружелюбный'
-          },
-          {
-            id: 'fac_2',
-            name: 'Братство Вуали',
-            influenceSphere: 'Теневые рынки, контрабанда, шпионаж',
-            leader: 'Тень-Без-Имени',
-            goals: 'Контроль над древними артефактами замка',
-            attitudeToParty: 'Нейтральный'
-          }
-        ],
-        sessionChronicles: {
-          starterScenario: 'Сессия 0/1: Дорога в Тумане. Герои сходятся в таверне «Старый Очаг», когда двери расхихикиваются от ночного порыва ветра...',
-          lazyDmNotes: {
-            charactersToHighlight: ['Паладин (Орден)', 'Следопыт (Знание лесов)'],
-            strongStart: 'Нападение стаи теневых волков прямо на постоялый двор!',
-            potentialScenes: ['Встреча с бродячим торговцем', 'Осмотр заброшенной часовни'],
-            secretsAndClues: [
-              'Старый мост заминирован растяжками',
-              'У графа аллергия на серебряную пыль'
-            ],
-            importantLocations: ['Таверна Старый Очаг', 'Старый Мост', 'Врата Замка']
-          }
-        },
-        starterParty: [
-          { name: 'Аэрон Серебряный Клинок', raceClass: 'Человек Паладин', level: 1, ac: 18, hp: 12, stats: 'СИЛ 16, ЛОВ 10, ТЕЛ 14, ИНТ 8, МУД 12, ХАР 14', keyEquipment: 'Латы, Щит, Длинный меч' },
-          { name: 'Лира Теневой Шаг', raceClass: 'Полуэльф Плут', level: 1, ac: 14, hp: 9, stats: 'СИЛ 10, ЛОВ 16, ТЕЛ 12, ИНТ 13, МУД 10, ХАР 14', keyEquipment: 'Кожаный доспех, Два кинжала, Воровские инструменты' },
-          { name: 'Элдорас Мглистый', raceClass: 'Высший Эльф Волшебник', level: 1, ac: 12, hp: 7, stats: 'СИЛ 8, ЛОВ 14, ТЕЛ 12, ИНТ 16, МУД 13, ХАР 10', keyEquipment: 'Книга заклинаний, Фокусировка, Кинжал' },
-          { name: 'Боргрим Громовой Щит', raceClass: 'Дворф Жрец', level: 1, ac: 16, hp: 11, stats: 'СИЛ 14, ЛОВ 8, ТЕЛ 16, ИНТ 10, МУД 16, ХАР 10', keyEquipment: 'Кольчуга, Боевой молот, Священный символ' }
-        ],
-        groupTreasuryAndSafety: {
-          startingPurse: { gp: 60, sp: 120, cp: 300 },
-          homebrewRules: [
-            'Быстрое питье зелий (Бонусное действие)',
-            'Критический урон = Максимальный урон кости + бросок second dice'
-          ],
-          linesAndVeils: {
-            lines: ['Пытки и жестокость к детям', 'Вредоносное поведение внутри партии'],
-            veils: ['Подробные сцены пыток (за кадром)', 'Кровавые анатомические детали']
-          }
-        },
-        createdAt: new Date().toISOString()
-      };
+      campaignData = this.createFallbackCampaign(options);
     }
 
     // Сохранение в файл кампании assets/data/Campaigns/
-    const campaignFilePath = path.join(CAMPAIGNS_DIR, `${campaignId}.json`);
+    const campaignFilePath = path.join(CAMPAIGNS_DIR, `${campaignData.id || campaignId}.json`);
     try {
       fs.writeFileSync(campaignFilePath, JSON.stringify(campaignData, null, 2), 'utf-8');
     } catch (e) {
@@ -708,44 +917,30 @@ Include: Calendar & weather, Main quest + 2 side quests, NPC relationship graph,
   }
 
   /**
-   * Генерация ИИ-арта / изображения
+   * Генерация ИИ-арта / изображения через Polza AI Art Engine
    */
-  public async generateImage(prompt: string, size: string = '1024x1024', modelId: ArtModelId = 'tongyi-mai/z-image', transparentBackground: boolean = false): Promise<{ url: string; localAssetUrl: string }> {
-    const ai = getGeminiClient();
+  public async generateImage(
+    prompt: string,
+    size: string = '1024x1024',
+    modelId: ArtModelId = 'tongyi-mai/z-image',
+    transparentBackground: boolean = false
+  ): Promise<{ url: string; localAssetUrl: string }> {
     const timestamp = Date.now();
     const filename = `${timestamp}_polza_art.png`;
     const localFilePath = path.join(AI_GENERATED_DIR, filename);
 
-    if (ai) {
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.1-flash-image',
-          contents: { parts: [{ text: prompt }] },
-          config: {
-            imageConfig: {
-              aspectRatio: size.includes('1536') ? '9:16' : '1:1',
-              imageSize: '1K'
-            }
-          }
-        });
-
-        for (const part of response.candidates?.[0]?.content?.parts || []) {
-          if (part.inlineData && part.inlineData.data) {
-            const buffer = Buffer.from(part.inlineData.data, 'base64');
-            fs.writeFileSync(localFilePath, buffer);
-            const relativeUrl = `/api/assets/file/data/ai-generated/${filename}`;
-            return {
-              url: relativeUrl,
-              localAssetUrl: relativeUrl
-            };
-          }
-        }
-      } catch (err) {
-        console.warn('Gemini image generation warning, generating procedural artistic token asset:', err);
-      }
+    // Попытка генерации через Polza AI API
+    const imageBuffer = await callPolzaImageGeneration(prompt, modelId, size);
+    if (imageBuffer) {
+      fs.writeFileSync(localFilePath, imageBuffer);
+      const relativeUrl = `/api/assets/file/data/ai-generated/${filename}`;
+      return {
+        url: relativeUrl,
+        localAssetUrl: relativeUrl
+      };
     }
 
-    // Автоматическая генерация высококачественного векторного холста / токена в PNG формате при офлайн режиме
+    // Автоматическая генерация высококачественного векторного холста / токена при офлайн режиме
     this.createProceduralArtCanvas(localFilePath, prompt, transparentBackground);
 
     const localAssetUrl = `/api/assets/file/data/ai-generated/${filename}`;

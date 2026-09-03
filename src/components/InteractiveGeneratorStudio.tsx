@@ -33,7 +33,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 
-export type GeneratorTab = 'city' | 'dwell' | 'taverns' | 'village' | 'cave' | 'bsp';
+export type GeneratorTab = 'battlemap' | 'dungeon' | 'city' | 'dwell' | 'taverns' | 'village' | 'cave' | 'bsp';
 
 interface InteractiveGeneratorStudioProps {
   currentScene: Scene;
@@ -48,7 +48,7 @@ export const InteractiveGeneratorStudio: React.FC<InteractiveGeneratorStudioProp
   onAddLayerToCurrentScene,
   onClose
 }) => {
-  const [activeTab, setActiveTab] = useState<GeneratorTab>('city');
+  const [activeTab, setActiveTab] = useState<GeneratorTab>('dungeon');
   const [importMode, setImportMode] = useState<'new_scene' | 'add_layer'>('new_scene');
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -136,6 +136,31 @@ export const InteractiveGeneratorStudio: React.FC<InteractiveGeneratorStudioProp
         audioBgm = 'dungeon';
         ambiencePresets = { dungeon: 0.8, wind: 0.3 };
         notesText = `🕳️ ПЕЩЕРЫ И КАРСТОВЫЕ РАСЩЕЛИНЫ\nЛокация: ${data.filename || 'Пещера'}\nСоздано: ${new Date().toLocaleString()}\nОкружение: Влажные каменные стены, сталактиты, эхо капель воды.\n\nОпасности:\n• Обвалы и узкие лазы\n• Подземные хищники и пауки`;
+      } else if (data.type === 'DUNGEON_MAP_EXPORT') {
+        mapDataUrl = data.dataUrl;
+        mapTitle = `Подземелье: ${data.filename || 'One-Page Dungeon'}`;
+        mapType = 'dungeon';
+        audioBgm = 'dungeon';
+        ambiencePresets = { dungeon: 0.9, wind: 0.2 };
+        notesText = `🗡️ ONE-PAGE DUNGEON (ПОДЗЕМЕЛЬЕ)\nЛокация: ${data.filename || 'Катакомбы'}\nСоздано: ${new Date().toLocaleString()}\nОкружение: Сырость, факелы на каменных стенах, потайные двери и ловушки.\n\nИсследование:\n• Процедурные комнаты и сокровищницы\n• Боевые столкновения и загадки`;
+      } else if (data.type === 'BATTLEMAP_EXPORT' || data.type === 'BATTLEMAP_MAP_EXPORT') {
+        mapDataUrl = data.dataUrl;
+        mapTitle = `Боевая карта: ${data.filename || data.title || 'Wilderness Battlemap'}`;
+        mapType = 'battlemap';
+        const biomeBgmMap: Record<string, 'dungeon' | 'crypt' | 'battle' | 'tavern' | 'forest'> = {
+          forest: 'forest',
+          winter: 'forest',
+          desert: 'dungeon',
+          cave: 'dungeon',
+          dungeon: 'crypt',
+          swamp: 'dungeon',
+          ship: 'tavern',
+          archipelago: 'forest',
+          river: 'forest'
+        };
+        audioBgm = biomeBgmMap[data.biome || 'forest'] || 'battle';
+        ambiencePresets = { wind: 0.4, rain: data.lighting === 'rain' ? 0.7 : 0 };
+        notesText = `⚔️ ТАКТИЧЕСКАЯ БОЕВАЯ КАРТА (5ft Grid)\nНазвание: ${mapTitle}\nБиом: ${data.biome || 'Лес'}\nРазмер: ${data.width || '150'}x${data.height || '100'} ft\nСоздано: ${new Date().toLocaleString()}\n\nОсобенности местности:\n• Процедурный рельеф и биом\n• Точки интереса (POI) и тактическое укрытие\n• Сетка D&D 5e и туман войны`;
       }
 
       if (mapDataUrl) {
@@ -225,6 +250,20 @@ export const InteractiveGeneratorStudio: React.FC<InteractiveGeneratorStudioProp
 
   const tabsConfig: Array<{ id: GeneratorTab; label: string; icon: React.ReactNode; src: string; desc: string }> = [
     {
+      id: 'battlemap',
+      label: 'Боевая карта (Battlemap)',
+      icon: <Trees size={14} />,
+      src: './Battlemap/index.html',
+      desc: 'Тактический генератор боевых карт: биомы, рельеф, POI, туман войны и 5ft сетка D&D 5e'
+    },
+    {
+      id: 'dungeon',
+      label: 'Подземелье (Dungeon)',
+      icon: <Sparkles size={14} />,
+      src: './Dungeon/index.html',
+      desc: 'Watabou One-Page Dungeon Generator: процедурные катакомбы, залы и секреты'
+    },
+    {
       id: 'city',
       label: 'Город (City)',
       icon: <Building2 size={14} />,
@@ -261,8 +300,8 @@ export const InteractiveGeneratorStudio: React.FC<InteractiveGeneratorStudioProp
     },
     {
       id: 'bsp',
-      label: 'Dungeon (BSP)',
-      icon: <Sparkles size={14} />,
+      label: 'Конструктор (BSP)',
+      icon: <Sliders size={14} />,
       src: '',
       desc: 'Алгоритмический генератор залов и катакомб D&D'
     }
@@ -359,6 +398,79 @@ export const InteractiveGeneratorStudio: React.FC<InteractiveGeneratorStudioProp
         <div className="bg-[#141518] px-3.5 py-2 border-b border-[#25262B] flex flex-wrap items-center justify-between gap-2 text-xs">
           {/* Специфичные кнопки управления для каждого генератора */}
           <div className="flex flex-wrap items-center gap-1.5">
+            {/* 0. DUNGEON CONTROLS */}
+            {activeTab === 'dungeon' && (
+              <>
+                <button
+                  onClick={() => sendIframeMessage({ action: 'GENERATE' })}
+                  className="px-2.5 py-1 rounded bg-[#252830] hover:bg-[#323640] text-white font-bold flex items-center gap-1 border border-[#3A3A3A]"
+                  title="Новое процедурное подземелье (Enter)"
+                >
+                  <RefreshCw size={12} className="text-[#F27D26]" />
+                  <span>Новое подземелье</span>
+                </button>
+                <button
+                  onClick={() => sendIframeMessage({ action: 'SHOW_PALETTE' })}
+                  className="px-2 py-1 rounded bg-[#1A1C20] hover:bg-[#252830] text-[#B0B4BC] border border-[#2A2A2A]"
+                  title="Выбор цветовой палитры и стиля (S)"
+                >
+                  Палитра
+                </button>
+                <button
+                  onClick={() => sendIframeMessage({ action: 'TOGGLE_PROPS' })}
+                  className="px-2 py-1 rounded bg-[#1A1C20] hover:bg-[#252830] text-[#B0B4BC] border border-[#2A2A2A]"
+                  title="Детали и убранство комнат (P)"
+                >
+                  Детали
+                </button>
+                <button
+                  onClick={() => sendIframeMessage({ action: 'TOGGLE_NOTES' })}
+                  className="px-2 py-1 rounded bg-[#1A1C20] hover:bg-[#252830] text-[#B0B4BC] border border-[#2A2A2A]"
+                  title="Показать/скрыть текстовые описания (N)"
+                >
+                  Заметки
+                </button>
+                <button
+                  onClick={() => sendIframeMessage({ action: 'TOGGLE_GRID' })}
+                  className="px-2 py-1 rounded bg-[#1A1C20] hover:bg-[#252830] text-[#B0B4BC] border border-[#2A2A2A]"
+                  title="Тактическая сетка (G)"
+                >
+                  Сетка
+                </button>
+              </>
+            )}
+
+            {/* 0. BATTLEMAP CONTROLS */}
+            {activeTab === 'battlemap' && (
+              <>
+                <button
+                  onClick={() => sendIframeMessage({ action: 'REROLL' })}
+                  className="px-2.5 py-1 rounded bg-[#252830] hover:bg-[#323640] text-white font-bold flex items-center gap-1 border border-[#3A3A3A]"
+                  title="Перебросить рельеф боевой карты"
+                >
+                  <RefreshCw size={12} className="text-[#F27D26]" />
+                  <span>Новая карта</span>
+                </button>
+                <div className="flex items-center gap-1 bg-[#1A1C20] px-2 py-0.5 rounded border border-[#2A2A2A] text-[11px]">
+                  <span className="text-[#8E9299]">Биом:</span>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_BIOME', biome: 'forest' })} className="px-1 hover:text-[#F27D26]">Лес</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_BIOME', biome: 'winter' })} className="px-1 hover:text-[#F27D26]">Зима</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_BIOME', biome: 'desert' })} className="px-1 hover:text-[#F27D26]">Пески</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_BIOME', biome: 'cave' })} className="px-1 hover:text-[#F27D26]">Грот</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_BIOME', biome: 'dungeon' })} className="px-1 hover:text-[#F27D26]">Замок</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_BIOME', biome: 'ship' })} className="px-1 hover:text-[#F27D26]">Корабли</button>
+                </div>
+                <div className="flex items-center gap-1 bg-[#1A1C20] px-2 py-0.5 rounded border border-[#2A2A2A] text-[11px]">
+                  <span className="text-[#8E9299]">Свет:</span>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_LIGHT', light: 'day' })} className="px-1 hover:text-[#F27D26]">☀️</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_LIGHT', light: 'dusk' })} className="px-1 hover:text-[#F27D26]">🌅</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_LIGHT', light: 'night' })} className="px-1 hover:text-[#F27D26]">🌙</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_LIGHT', light: 'rain' })} className="px-1 hover:text-[#F27D26]">🌧️</button>
+                  <button onClick={() => sendIframeMessage({ action: 'SET_LIGHT', light: 'snow' })} className="px-1 hover:text-[#F27D26]">❄️</button>
+                </div>
+              </>
+            )}
+
             {/* 1. CITY CONTROLS */}
             {activeTab === 'city' && (
               <>
@@ -581,7 +693,9 @@ export const InteractiveGeneratorStudio: React.FC<InteractiveGeneratorStudioProp
             <button
               onClick={() => {
                 setIsExporting(true);
-                if (activeTab === 'city') sendIframeMessage({ action: 'EXPORT_PNG', download: false });
+                if (activeTab === 'battlemap') sendIframeMessage({ type: 'BATTLEMAP_REQUEST_EXPORT' });
+                else if (activeTab === 'dungeon') sendIframeMessage({ action: 'EXPORT_PNG', download: false });
+                else if (activeTab === 'city') sendIframeMessage({ action: 'EXPORT_PNG', download: false });
                 else if (activeTab === 'dwell') sendIframeMessage({ type: 'DWELLINGS_EXPORT_PNG', download: false });
                 else if (activeTab === 'taverns') sendIframeMessage({ action: 'EXPORT_FLOOR', download: false });
                 else if (activeTab === 'village') sendIframeMessage({ action: 'EXPORT_PNG', download: false });
@@ -597,7 +711,9 @@ export const InteractiveGeneratorStudio: React.FC<InteractiveGeneratorStudioProp
 
             <button
               onClick={() => {
-                if (activeTab === 'city') sendIframeMessage({ action: 'EXPORT_PNG', download: true });
+                if (activeTab === 'battlemap') sendIframeMessage({ type: 'BATTLEMAP_REQUEST_EXPORT' });
+                else if (activeTab === 'dungeon') sendIframeMessage({ action: 'EXPORT_PNG', download: true });
+                else if (activeTab === 'city') sendIframeMessage({ action: 'EXPORT_PNG', download: true });
                 else if (activeTab === 'dwell') sendIframeMessage({ type: 'DWELLINGS_EXPORT_PNG', download: true });
                 else if (activeTab === 'taverns') sendIframeMessage({ action: 'EXPORT_FLOOR', download: true });
                 else if (activeTab === 'village') sendIframeMessage({ action: 'EXPORT_PNG', download: true });

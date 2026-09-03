@@ -39,8 +39,8 @@ export const GridOverlay: React.FC<GridOverlayProps> = ({ grid, width, height })
     ctx.lineWidth = 1;
 
     const size = grid.size;
-    const offX = (grid.offsetX || 0) % size;
-    const offY = (grid.offsetY || 0) % size;
+    const offX = (((grid.offsetX || 0) % size) + size) % size;
+    const offY = (((grid.offsetY || 0) % size) + size) % size;
 
     if (grid.type === 'hex_pointy' || grid.type === 'hex_flat') {
       // Гексагональная сетка

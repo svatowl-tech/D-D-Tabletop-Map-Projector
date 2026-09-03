@@ -746,10 +746,21 @@ export function generateStandaloneHTML(): string {
         fogCtx.clearRect(0, 0, 1920, 1080);
 
         fsBtn.addEventListener('click', () => {
-          if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen();
+          const doc = document;
+          const docEl = document.documentElement;
+          const isFull = !!(doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement);
+          if (!isFull) {
+            if (docEl.requestFullscreen) {
+              docEl.requestFullscreen();
+            } else if (docEl.webkitRequestFullscreen) {
+              docEl.webkitRequestFullscreen();
+            }
           } else {
-            document.exitFullscreen();
+            if (doc.exitFullscreen) {
+              doc.exitFullscreen();
+            } else if (doc.webkitExitFullscreen) {
+              doc.webkitExitFullscreen();
+            }
           }
         });
 

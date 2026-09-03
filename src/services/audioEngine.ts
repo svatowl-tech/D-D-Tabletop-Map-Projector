@@ -133,13 +133,38 @@ export class AudioEngineService {
   // SFX SOUNDBOARD (Мгновенные звуковые эффекты)
   // ==========================================
 
-  public playSFX(sfxType: 'sword' | 'fireball' | 'roar' | 'coin' | 'dice' | 'heal' | 'lightning' | 'victory' | 'darkness'): void {
+  public playSFX(sfxType: 'sword' | 'fireball' | 'roar' | 'coin' | 'dice' | 'heal' | 'lightning' | 'victory' | 'darkness' | 'whoosh'): void {
     const ctx = this.ensureContext();
     if (!this.sfxGain) return;
 
     const now = ctx.currentTime;
 
     switch (sfxType) {
+      case 'whoosh': {
+        // Воздушный свист смены карты / свитка
+        const noise = this.createNoiseBuffer(ctx, 0.4);
+        const noiseNode = ctx.createBufferSource();
+        noiseNode.buffer = noise;
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(400, now);
+        filter.frequency.exponentialRampToValueAtTime(2200, now + 0.18);
+        filter.frequency.exponentialRampToValueAtTime(300, now + 0.38);
+        filter.Q.setValueAtTime(3, now);
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.01, now);
+        gain.gain.linearRampToValueAtTime(0.5, now + 0.15);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+        noiseNode.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.sfxGain);
+        noiseNode.start(now);
+        break;
+      }
+
       case 'dice': {
         // Щелчок и перекатывание костей
         for (let i = 0; i < 4; i++) {

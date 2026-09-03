@@ -18,7 +18,12 @@ export type DMTool =
   | 'ping'
   | 'ruler'
   | 'spell_template'
-  | 'draw';
+  | 'draw'
+  | 'eraser'
+  | 'hazard_fire'
+  | 'hazard_water'
+  | 'hazard_gas'
+  | 'grid_align';
 
 export type FogToolMode = DMTool;
 
@@ -167,6 +172,35 @@ export interface TacticalDrawing {
   opacity?: number;
 }
 
+export type ElementalHazardType = 'fire' | 'water' | 'gas';
+
+export interface ElementalHazardZone {
+  id: string;
+  element: ElementalHazardType;
+  subType: string;
+  name?: string;
+  color: string;
+  secondaryColor?: string;
+  opacity: number;
+  radius: number;
+  points: StrokePoint[];
+  speed?: number;
+  density?: number;
+  createdAt: number;
+}
+
+export interface ElementalBrushConfig {
+  element: ElementalHazardType;
+  subType: string;
+  color: string;
+  secondaryColor: string;
+  radius: number;
+  opacity: number;
+  speed: number;
+  density: number;
+  eraserMode?: boolean;
+}
+
 export interface SubmapPortal {
   id: string;
   name: string;
@@ -243,6 +277,7 @@ export interface Scene {
   viewport?: ViewportTransform;
   maskDataUrl?: string;
   drawings?: TacticalDrawing[];
+  hazards?: ElementalHazardZone[];
   portals?: SubmapPortal[];
   bgmPreset?: string;
   ambiencePreset?: string;
@@ -298,6 +333,7 @@ export type BroadcastMessage =
   | { type: 'UPDATE_LAYER_TRANSFORM'; layerId: string; transform: Partial<MapLayer> }
   | { type: 'REMOVE_LAYER'; layerId: string }
   | { type: 'SYNC_DRAWINGS'; drawings: TacticalDrawing[] }
+  | { type: 'SYNC_HAZARDS'; hazards: ElementalHazardZone[] }
   | { type: 'SYNC_SPELL_TEMPLATE'; template: SpellTemplate | null }
   | { type: 'SYNC_RULER'; ruler: RulerMeasurement | null }
   | { type: 'SET_BLACKOUT'; theme: BlackoutTheme }
@@ -336,6 +372,7 @@ export interface FullSyncedState {
   blackoutTheme?: BlackoutTheme;
   layers?: MapLayer[];
   drawings?: TacticalDrawing[];
+  hazards?: ElementalHazardZone[];
   spellTemplate?: SpellTemplate | null;
   combat?: CombatTrackerState;
 }
