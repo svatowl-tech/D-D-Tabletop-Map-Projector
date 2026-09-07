@@ -16,7 +16,7 @@ interface PingOverlayProps {
   height?: number;
 }
 
-export const PingOverlay: React.FC<PingOverlayProps> = ({
+export const PingOverlay: React.FC<PingOverlayProps> = React.memo(({
   pings,
   laserPoints = [],
   width = 1920,
@@ -28,18 +28,27 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    canvas.width = width;
-    canvas.height = height;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
 
-    let animId: number;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Если нет активных точек лазера - очищаем один раз и не запускаем rAF цикл
+    if (laserPoints.length === 0) {
+      ctx.clearRect(0, 0, width, height);
+      return;
+    }
+
+    let animId: number = 0;
 
     const render = () => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
+      const now = Date.now();
       ctx.clearRect(0, 0, width, height);
 
-      const now = Date.now();
+      let hasActivePoints = false;
 
       // Отрисовка лазерного следа с затуханием (1.5 сек)
       if (laserPoints.length > 1) {
@@ -53,12 +62,13 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({
           const age = now - p2.timestamp;
           if (age > 1500) continue;
 
+          hasActivePoints = true;
           const alpha = Math.max(0, 1 - age / 1500);
 
           // Внешнее неоновое свечение
           ctx.beginPath();
           ctx.strokeStyle = `rgba(255, 40, 40, ${alpha * 0.5})`;
-          ctx.lineWidth = 12;
+          ctx.lineWidth = 10;
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
@@ -66,7 +76,7 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({
           // Яркое ядро лазера
           ctx.beginPath();
           ctx.strokeStyle = `rgba(255, 240, 240, ${alpha})`;
-          ctx.lineWidth = 4;
+          ctx.lineWidth = 3.5;
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
@@ -75,23 +85,38 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({
         // Кончик лазера (яркая точка)
         const lastPoint = laserPoints[laserPoints.length - 1];
         if (now - lastPoint.timestamp < 1500) {
-          ctx.fillStyle = '#FF0000';
-          ctx.shadowColor = '#FF2222';
-          ctx.shadowBlur = 15;
+          hasActivePoints = true;
+          ctx.fillStyle = '#FF2222';
           ctx.beginPath();
-          ctx.arc(lastPoint.x, lastPoint.y, 5, 0, Math.PI * 2);
+          ctx.arc(lastPoint.x, lastPoint.y, 4.5, 0, Math.PI * 2);
           ctx.fill();
         }
 
         ctx.restore();
+      } else if (laserPoints.length === 1) {
+        const p = laserPoints[0];
+        if (now - p.timestamp < 1500) {
+          hasActivePoints = true;
+          ctx.fillStyle = '#FF2222';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
-      animId = requestAnimationFrame(render);
+      // Цикл продолжается только пока есть видимые затухающие точки
+      if (hasActivePoints) {
+        animId = requestAnimationFrame(render);
+      } else {
+        ctx.clearRect(0, 0, width, height);
+      }
     };
 
     render();
 
-    return () => cancelAnimationFrame(animId);
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+    };
   }, [laserPoints, width, height]);
 
   return (
@@ -133,4 +158,4 @@ export const PingOverlay: React.FC<PingOverlayProps> = ({
       ))}
     </div>
   );
-};
+});

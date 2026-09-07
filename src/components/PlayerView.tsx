@@ -154,6 +154,9 @@ export const PlayerView: React.FC = () => {
     }
 
     reportScreenSizeToDm();
+    if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+      syncService.registerTargetWindow(window.opener);
+    }
     window.addEventListener('resize', reportScreenSizeToDm);
     return () => window.removeEventListener('resize', reportScreenSizeToDm);
   }, []);
@@ -510,6 +513,7 @@ export const PlayerView: React.FC = () => {
                     loop
                     muted
                     playsInline
+                    disablePictureInPicture
                     className="w-full h-full object-fill pointer-events-none"
                   />
                 ) : (
@@ -518,6 +522,7 @@ export const PlayerView: React.FC = () => {
                     alt={layer.name}
                     className="w-full h-full object-fill pointer-events-none"
                     draggable={false}
+                    decoding="async"
                   />
                 )}
               </div>

@@ -16,15 +16,19 @@ interface GridOverlayProps {
   height: number;
 }
 
-export const GridOverlay: React.FC<GridOverlayProps> = ({ grid, width, height }) => {
+export const GridOverlay: React.FC<GridOverlayProps> = React.memo(({ grid, width, height }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    if (!grid.enabled) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    canvas.width = width;
-    canvas.height = height;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -104,4 +108,4 @@ export const GridOverlay: React.FC<GridOverlayProps> = ({ grid, width, height })
       style={{ width: `${width}px`, height: `${height}px` }}
     />
   );
-};
+});

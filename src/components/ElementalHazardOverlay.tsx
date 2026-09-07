@@ -24,7 +24,7 @@ interface Props {
   activeHazard?: ElementalHazardZone | null;
 }
 
-export const ElementalHazardOverlay: React.FC<Props> = ({
+export const ElementalHazardOverlay: React.FC<Props> = React.memo(({
   width,
   height,
   hazards,
@@ -38,11 +38,19 @@ export const ElementalHazardOverlay: React.FC<Props> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    canvas.width = width;
-    canvas.height = height;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    const allHazards = activeHazard ? [...hazards, activeHazard] : hazards;
+    if (allHazards.length === 0) {
+      ctx.clearRect(0, 0, width, height);
+      return;
+    }
 
     let isRunning = true;
 
@@ -52,14 +60,13 @@ export const ElementalHazardOverlay: React.FC<Props> = ({
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
       ctx.clearRect(0, 0, width, height);
 
-      const allHazards = activeHazard ? [...hazards, activeHazard] : hazards;
-      if (allHazards.length === 0) {
-        animFrameRef.current = requestAnimationFrame(render);
+      const currentHazards = activeHazard ? [...hazards, activeHazard] : hazards;
+      if (currentHazards.length === 0) {
         return;
       }
 
       // Отрисовка зон стихий
-      for (const zone of allHazards) {
+      for (const zone of currentHazards) {
         if (!zone.points || zone.points.length === 0) continue;
 
         const speed = zone.speed || 1.0;
@@ -89,7 +96,9 @@ export const ElementalHazardOverlay: React.FC<Props> = ({
 
     return () => {
       isRunning = false;
-      cancelAnimationFrame(animFrameRef.current);
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
     };
   }, [width, height, hazards, activeHazard]);
 
@@ -100,7 +109,7 @@ export const ElementalHazardOverlay: React.FC<Props> = ({
       style={{ width: `${width}px`, height: `${height}px` }}
     />
   );
-};
+});
 
 /**
  * 1. Рендеринг зон огня, инферно и тлеющих углей
@@ -121,17 +130,20 @@ function renderFireZone(
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = radius * 2;
+  ctx.lineWidth = radius * 2.2;
   ctx.strokeStyle = color;
-  ctx.globalAlpha = opacity * 0.45;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = radius * 0.8;
+  ctx.globalAlpha = opacity * 0.35;
 
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length; i++) {
     ctx.lineTo(points[i].x, points[i].y);
   }
+  ctx.stroke();
+
+  ctx.lineWidth = radius * 1.5;
+  ctx.strokeStyle = secondaryColor;
+  ctx.globalAlpha = opacity * 0.45;
   ctx.stroke();
   ctx.restore();
 
@@ -172,8 +184,6 @@ function renderFireZone(
         ctx.save();
         ctx.fillStyle = secondaryColor;
         ctx.globalAlpha = opacity * (1 - sparkPhase) * 0.9;
-        ctx.shadowColor = secondaryColor;
-        ctx.shadowBlur = 6;
         ctx.beginPath();
         ctx.arc(sx, sy, sparkR, 0, Math.PI * 2);
         ctx.fill();
@@ -216,11 +226,6 @@ function renderWaterZone(
   ctx.lineWidth = radius * 2;
   ctx.strokeStyle = color;
   ctx.globalAlpha = opacity * 0.85;
-
-  if (isMagma) {
-    ctx.shadowColor = '#FF3300';
-    ctx.shadowBlur = radius * 0.5;
-  }
 
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);

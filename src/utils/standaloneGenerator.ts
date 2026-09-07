@@ -227,7 +227,8 @@ export function generateStandaloneHTML(): string {
         fitMapToViewport();
 
         openPlayerBtn.addEventListener('click', () => {
-          const url = window.location.origin + window.location.pathname + '?mode=player';
+          const baseUrl = window.location.href.split('?')[0].split('#')[0];
+          const url = baseUrl + '?mode=player';
           const win = window.open(url, 'dnd_player_view', 'width=1280,height=720');
           if (!win || win.closed || typeof win.closed === 'undefined') {
             alert('Popup was blocked by browser. Please allow popups.');

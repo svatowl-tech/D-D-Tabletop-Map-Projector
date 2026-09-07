@@ -18,7 +18,7 @@ interface TacticalDrawingOverlayProps {
   gridSize?: number;
 }
 
-export const TacticalDrawingOverlay: React.FC<TacticalDrawingOverlayProps> = ({
+export const TacticalDrawingOverlay: React.FC<TacticalDrawingOverlayProps> = React.memo(({
   width,
   height,
   drawings,
@@ -33,8 +33,10 @@ export const TacticalDrawingOverlay: React.FC<TacticalDrawingOverlayProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    canvas.width = width;
-    canvas.height = height;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -212,4 +214,4 @@ export const TacticalDrawingOverlay: React.FC<TacticalDrawingOverlayProps> = ({
       style={{ width: `${width}px`, height: `${height}px` }}
     />
   );
-};
+});

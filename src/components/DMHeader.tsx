@@ -56,7 +56,7 @@ interface DMHeaderProps {
   audioState: AudioEngineState;
 }
 
-export const DMHeader: React.FC<DMHeaderProps> = ({
+export const DMHeader: React.FC<DMHeaderProps> = React.memo(({
   currentScene,
   allScenes,
   onSwitchScene,
@@ -343,5 +343,5 @@ export const DMHeader: React.FC<DMHeaderProps> = ({
       </div>
     </header>
   );
-};
+});
 

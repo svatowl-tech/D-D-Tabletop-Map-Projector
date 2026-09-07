@@ -96,7 +96,7 @@ interface DMToolbarProps {
   onClearHazards?: (element?: ElementalHazardType) => void;
 }
 
-export const DMToolbar: React.FC<DMToolbarProps> = ({
+export const DMToolbar: React.FC<DMToolbarProps> = React.memo(({
   currentTool,
   onSelectTool,
   brushRadius,
@@ -1370,4 +1370,4 @@ export const DMToolbar: React.FC<DMToolbarProps> = ({
       )}
     </div>
   );
-};
+});

@@ -3,9 +3,14 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
+import browserslist from 'browserslist';
+import { browserslistToTargets } from 'lightningcss';
 
 export default defineConfig(() => {
   const isStandalone = process.env.BUILD_STANDALONE === 'true';
+  const targets = browserslistToTargets(
+    browserslist('safari >= 11, chrome >= 60, firefox >= 60, ios >= 11')
+  );
 
   return {
     base: './',
@@ -19,11 +24,18 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    css: {
+      transformer: 'lightningcss',
+      lightningcss: {
+        targets,
+      },
+    },
     build: {
       outDir: isStandalone ? 'dist-standalone' : 'dist',
       emptyOutDir: true,
-      target: ['es2018', 'safari11', 'chrome64', 'firefox60'],
-      cssTarget: ['safari11', 'chrome64'],
+      target: ['es2018', 'safari11', 'chrome60', 'firefox60'],
+      cssTarget: ['safari11', 'chrome60'],
+      cssMinify: 'lightningcss',
     },
     server: {
       port: 3000,

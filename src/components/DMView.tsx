@@ -15,7 +15,7 @@
  * - Хранилище кампании (Map Vault) и BSP процедурный генератор подземелий.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   DMTool,
   GridConfig,
@@ -167,7 +167,9 @@ export const DMView: React.FC = () => {
   const [spellTemplate, setSpellTemplate] = useState<SpellTemplate | null>(null);
   const [ruler, setRuler] = useState<RulerMeasurement | null>(null);
   const [eraserRadius, setEraserRadius] = useState<number>(30);
-  const [mouseMapPos, setMouseMapPos] = useState<StrokePoint | null>(null);
+  const brushCursorRef = useRef<HTMLDivElement>(null);
+  const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
+  const panRafRef = useRef<number>(0);
 
   // Режим затемнения экрана игроков
   const [blackoutTheme, setBlackoutTheme] = useState<BlackoutTheme>('none');
@@ -331,11 +333,10 @@ export const DMView: React.FC = () => {
     syncService.send({ type: 'SYNC_GRID', grid });
   }, [grid]);
 
-  // Синхронизация позиции камеры и привязки
+  // Синхронизация позиции камеры и привязки (без двойных React-рендеров)
   useEffect(() => {
     syncService.send({ type: 'SYNC_VIEWPORT', transform: viewport });
     if (isLinkedCamera) {
-      setPlayerViewport(viewport);
       syncService.send({ type: 'SET_PLAYER_VIEWPORT', transform: viewport });
     }
   }, [viewport, isLinkedCamera]);
@@ -374,11 +375,6 @@ export const DMView: React.FC = () => {
   useEffect(() => {
     syncService.send({ type: 'SYNC_RULER', ruler });
   }, [ruler]);
-
-  // Синхронизация сетки
-  useEffect(() => {
-    syncService.send({ type: 'SYNC_GRID', grid });
-  }, [grid]);
 
   // Полная синхронизация при подключении окна проектора и обновление кэша
   const broadcastFullState = useCallback(() => {
@@ -573,6 +569,42 @@ export const DMView: React.FC = () => {
     });
   }, []);
 
+  // Мемоизированные параметры виртуального курсора для мгновенного отклика на старом железе
+  const cursorSize = useMemo(() => {
+    if (tool === 'eraser') return eraserRadius * 2;
+    if (tool === 'draw') return (drawWidth || 4) + 12;
+    if (tool === 'reveal' || tool === 'hide') return brushRadius * 2;
+    return (hazardConfig?.radius || 60) * 2;
+  }, [tool, eraserRadius, drawWidth, brushRadius, hazardConfig?.radius]);
+
+  const cursorBorderColor = useMemo(() => {
+    if (tool === 'eraser') return '#EF4444';
+    if (tool === 'draw') return drawColor || '#F27D26';
+    if (tool === 'hazard_fire') return '#F97316';
+    if (tool === 'hazard_water') return '#06B6D4';
+    if (tool === 'hazard_gas') return '#10B981';
+    return '#F27D26';
+  }, [tool, drawColor]);
+
+  const cursorBgColor = useMemo(() => {
+    if (tool === 'eraser') return 'rgba(239, 68, 68, 0.15)';
+    if (tool === 'draw') return `${drawColor || '#F27D26'}22`;
+    return 'transparent';
+  }, [tool, drawColor]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (brushCursorRef.current) {
+      brushCursorRef.current.style.display = 'none';
+    }
+  }, []);
+
+  const handleToggleLinkCamera = useCallback(() => setIsLinkedCamera((prev) => !prev), []);
+
+  const effectivePlayerViewport = useMemo(
+    () => (isLinkedCamera ? viewport : playerViewport),
+    [isLinkedCamera, viewport, playerViewport]
+  );
+
   // 2. ОБРАБОТЧИКИ СОБЫТИЙ МЫШИ НА ХОЛСТЕ
   const handleMouseDown = (e: React.MouseEvent) => {
     // Средняя кнопка мыши или пробел — всегда панорамирование
@@ -585,7 +617,6 @@ export const DMView: React.FC = () => {
     if (e.button !== 0) return;
 
     const pt = getMapCoordinates(e);
-    setMouseMapPos(pt);
 
     // 0. Ластик (стирание объектов на карте)
     if (tool === 'eraser') {
@@ -747,7 +778,17 @@ export const DMView: React.FC = () => {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const pt = getMapCoordinates(e);
-    setMouseMapPos(pt);
+
+    // Аппаратное позиционирование виртуального курсора без перерисовки дерева React
+    if (brushCursorRef.current) {
+      const isBrush = ['eraser', 'draw', 'hazard_fire', 'hazard_water', 'hazard_gas', 'reveal', 'hide'].includes(tool);
+      if (isBrush) {
+        brushCursorRef.current.style.display = 'block';
+        brushCursorRef.current.style.transform = `translate3d(${pt.x - cursorSize / 2}px, ${pt.y - cursorSize / 2}px, 0)`;
+      } else {
+        brushCursorRef.current.style.display = 'none';
+      }
+    }
 
     // Стирание ластиком
     if (isInteractingRef.current && tool === 'eraser') {
@@ -784,13 +825,23 @@ export const DMView: React.FC = () => {
       return;
     }
 
-    // Панорамирование
+    // Панорамирование с аппаратным дросселированием через requestAnimationFrame для сверхплавного отклика
     if (isInteractingRef.current && (tool === 'pan' || e.buttons === 4)) {
-      setViewport((prev) => ({
-        ...prev,
-        x: e.clientX - panStartRef.current.x,
-        y: e.clientY - panStartRef.current.y
-      }));
+      const nextX = e.clientX - panStartRef.current.x;
+      const nextY = e.clientY - panStartRef.current.y;
+      pendingPanRef.current = { x: nextX, y: nextY };
+      if (!panRafRef.current) {
+        panRafRef.current = requestAnimationFrame(() => {
+          panRafRef.current = 0;
+          if (pendingPanRef.current) {
+            setViewport((prev) => ({
+              ...prev,
+              x: pendingPanRef.current!.x,
+              y: pendingPanRef.current!.y
+            }));
+          }
+        });
+      }
       return;
     }
 
@@ -817,13 +868,13 @@ export const DMView: React.FC = () => {
       return;
     }
 
-    // Лазерная указка
+    // Лазерная указка (оптимизирована под 30 FPS для старых CPU)
     if (tool === 'laser') {
       const now = Date.now();
-      if (now - lastLaserTimeRef.current > 20) {
+      if (now - lastLaserTimeRef.current > 35) {
         lastLaserTimeRef.current = now;
         const newPoint: LaserPoint = { x: pt.x, y: pt.y, timestamp: now };
-        setLaserPoints((prev) => [...prev.slice(-35), newPoint]);
+        setLaserPoints((prev) => [...prev.slice(-25), newPoint]);
         syncService.send({ type: 'LASER_STREAM', point: newPoint });
       }
       return;
@@ -901,6 +952,19 @@ export const DMView: React.FC = () => {
   };
 
   const handleMouseUp = () => {
+    if (panRafRef.current) {
+      cancelAnimationFrame(panRafRef.current);
+      panRafRef.current = 0;
+    }
+    if (pendingPanRef.current) {
+      setViewport((prev) => ({
+        ...prev,
+        x: pendingPanRef.current!.x,
+        y: pendingPanRef.current!.y
+      }));
+      pendingPanRef.current = null;
+    }
+
     if (isDraggingLayerRef.current) {
       isDraggingLayerRef.current = false;
     }
@@ -1309,9 +1373,12 @@ export const DMView: React.FC = () => {
 
   // 6. ОТКРЫТИЕ ОКНА ПРОЕКТОРА
   const handleOpenPlayerWindow = () => {
-    const url = `${window.location.origin}${window.location.pathname}?mode=player`;
+    const baseUrl = window.location.href.split('?')[0].split('#')[0];
+    const url = `${baseUrl}?mode=player`;
     const newWin = window.open(url, '_blank');
-    if (!newWin) {
+    if (newWin) {
+      syncService.registerTargetWindow(newWin);
+    } else {
       alert('Всплывающее окно заблокировано браузером. Разрешите всплывающие окна для работы со вторым экраном.');
     }
   };
@@ -1621,7 +1688,7 @@ export const DMView: React.FC = () => {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => setMouseMapPos(null)}
+        onMouseLeave={handleMouseLeave}
         onWheel={handleWheel}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
@@ -1684,6 +1751,7 @@ export const DMView: React.FC = () => {
                     alt={layer.name}
                     className="w-full h-full object-fill pointer-events-none"
                     draggable={false}
+                    decoding="async"
                   />
                 )}
 
@@ -1774,69 +1842,33 @@ export const DMView: React.FC = () => {
 
           {/* З. РАМКА ВЬЮПОРТА ИГРОКОВ (PLAYER VIEWPORT FRAME OVERLAY) */}
           <PlayerViewportFrameOverlay
-            playerViewport={playerViewport}
+            playerViewport={effectivePlayerViewport}
             dmViewport={viewport}
             playerScreenSize={playerScreenSize}
             isLinkedCamera={isLinkedCamera}
             isConnected={isConnectedToPlayer}
             mapWidth={mapWidth}
             mapHeight={mapHeight}
-            onToggleLinkCamera={() => setIsLinkedCamera(!isLinkedCamera)}
+            onToggleLinkCamera={handleToggleLinkCamera}
             onSetPlayerViewport={handleSetPlayerViewport}
             onCenterOnPlayerView={handleCenterOnPlayerView}
             onCenterPlayerOnDmView={handleCenterPlayerOnDmView}
             onFitMapForPlayers={handleFitMapForPlayers}
           />
 
-          {/* И. Индикатор курсора кисти / ластика / стихии */}
-          {mouseMapPos &&
-            ['eraser', 'draw', 'hazard_fire', 'hazard_water', 'hazard_gas', 'reveal', 'hide'].includes(
-              tool
-            ) && (
-              <div
-                className="absolute pointer-events-none rounded-full border-2 border-dashed z-50 -translate-x-1/2 -translate-y-1/2 shadow-sm"
-                style={{
-                  left: `${mouseMapPos.x}px`,
-                  top: `${mouseMapPos.y}px`,
-                  width: `${
-                    tool === 'eraser'
-                      ? eraserRadius * 2
-                      : tool === 'draw'
-                      ? (drawWidth || 4) + 12
-                      : tool === 'reveal' || tool === 'hide'
-                      ? brushRadius * 2
-                      : (hazardConfig?.radius || 60) * 2
-                  }px`,
-                  height: `${
-                    tool === 'eraser'
-                      ? eraserRadius * 2
-                      : tool === 'draw'
-                      ? (drawWidth || 4) + 12
-                      : tool === 'reveal' || tool === 'hide'
-                      ? brushRadius * 2
-                      : (hazardConfig?.radius || 60) * 2
-                  }px`,
-                  borderColor:
-                    tool === 'eraser'
-                      ? '#EF4444'
-                      : tool === 'draw'
-                      ? drawColor
-                      : tool === 'hazard_fire'
-                      ? '#F97316'
-                      : tool === 'hazard_water'
-                      ? '#06B6D4'
-                      : tool === 'hazard_gas'
-                      ? '#10B981'
-                      : '#F27D26',
-                  backgroundColor:
-                    tool === 'eraser'
-                      ? 'rgba(239, 68, 68, 0.15)'
-                      : tool === 'draw'
-                      ? `${drawColor}22`
-                      : 'transparent'
-                }}
-              />
-            )}
+          {/* И. Высокопроизводительный индикатор курсора кисти (без React-рендеров на каждое движение мыши) */}
+          <div
+            ref={brushCursorRef}
+            className="absolute pointer-events-none rounded-full border-2 border-dashed z-50 shadow-sm transition-none will-change-transform"
+            style={{
+              display: 'none',
+              width: `${cursorSize}px`,
+              height: `${cursorSize}px`,
+              borderColor: cursorBorderColor,
+              backgroundColor: cursorBgColor,
+              transform: 'translate3d(-9999px, -9999px, 0)'
+            }}
+          />
         </div>
 
         {/* ПАНЕЛЬ БЫСТРОГО УПРАВЛЕНИЯ ЭКРАНОМ ИГРОКОВ (PLAYER VIEWPORT QUICK BAR) */}

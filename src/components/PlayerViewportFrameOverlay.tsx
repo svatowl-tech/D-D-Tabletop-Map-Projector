@@ -37,7 +37,7 @@ interface Props {
   onFitMapForPlayers?: () => void;
 }
 
-export const PlayerViewportFrameOverlay: React.FC<Props> = ({
+export const PlayerViewportFrameOverlay: React.FC<Props> = React.memo(({
   playerViewport = { x: 0, y: 0, scale: 1 },
   playerScreenSize = { width: 1920, height: 1080 },
   dmViewport = { x: 0, y: 0, scale: 1 },
@@ -299,4 +299,4 @@ export const PlayerViewportFrameOverlay: React.FC<Props> = ({
       </div>
     </div>
   );
-};
+});
