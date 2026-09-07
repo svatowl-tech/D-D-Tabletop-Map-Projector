@@ -56,6 +56,7 @@ import { RandomGeneratorStudioModal } from './RandomGeneratorStudioModal';
 import { PolzaAiStudioModal } from './PolzaAiStudioModal';
 import { SettingsModal } from './SettingsModal';
 import { PlayerViewportFrameOverlay } from './PlayerViewportFrameOverlay';
+import { PlayerViewportControlModal } from './PlayerViewportControlModal';
 import { TabletopDropOverlay } from './TabletopDropOverlay';
 import { HandoutCardPayload } from '../types/generator';
 import { FogEngine } from '../services/fogEngine';
@@ -82,6 +83,7 @@ import {
   Maximize2,
   ZoomIn,
   ZoomOut,
+  Sliders,
   CheckCircle2,
   AlertCircle,
   Info as InfoIcon,
@@ -126,6 +128,8 @@ export const DMView: React.FC = () => {
     height: 1080
   });
   const [isLinkedCamera, setIsLinkedCamera] = useState<boolean>(true);
+  const [isPlayerViewportLocked, setIsPlayerViewportLocked] = useState<boolean>(false);
+  const [isPlayerViewportModalOpen, setIsPlayerViewportModalOpen] = useState<boolean>(false);
   const [isConnectedToPlayer, setIsConnectedToPlayer] = useState<boolean>(false);
 
   const [tool, setTool] = useState<DMTool>('reveal');
@@ -426,10 +430,20 @@ export const DMView: React.FC = () => {
     return () => unsub();
   }, [broadcastFullState]);
 
-  // Изменение позиции вьюпорта игроков вручную или с рамки
+  // Изменение позиции вьюпорта игроков вручную, с рамки или из модального окна
   const handleSetPlayerViewport = useCallback((newVp: ViewportTransform) => {
+    setIsLinkedCamera(false);
     setPlayerViewport(newVp);
     syncService.send({ type: 'SET_PLAYER_VIEWPORT', transform: newVp });
+  }, []);
+
+  const handleSetPlayerScreenSize = useCallback((size: { width: number; height: number }) => {
+    setPlayerScreenSize(size);
+    syncService.send({ type: 'PLAYER_WINDOW_RESIZED', width: size.width, height: size.height });
+  }, []);
+
+  const handleToggleLockPosition = useCallback(() => {
+    setIsPlayerViewportLocked((prev) => !prev);
   }, []);
 
   // Вписать всю карту на экран игроков
@@ -1846,14 +1860,19 @@ export const DMView: React.FC = () => {
             dmViewport={viewport}
             playerScreenSize={playerScreenSize}
             isLinkedCamera={isLinkedCamera}
+            isPositionLocked={isPlayerViewportLocked}
             isConnected={isConnectedToPlayer}
             mapWidth={mapWidth}
             mapHeight={mapHeight}
+            gridSize={grid.enabled ? grid.size : 50}
+            snapToGrid={grid.enabled}
             onToggleLinkCamera={handleToggleLinkCamera}
+            onToggleLockPosition={handleToggleLockPosition}
             onSetPlayerViewport={handleSetPlayerViewport}
             onCenterOnPlayerView={handleCenterOnPlayerView}
             onCenterPlayerOnDmView={handleCenterPlayerOnDmView}
             onFitMapForPlayers={handleFitMapForPlayers}
+            onOpenPrecisionPanel={() => setIsPlayerViewportModalOpen(true)}
           />
 
           {/* И. Высокопроизводительный индикатор курсора кисти (без React-рендеров на каждое движение мыши) */}
@@ -1872,27 +1891,57 @@ export const DMView: React.FC = () => {
         </div>
 
         {/* ПАНЕЛЬ БЫСТРОГО УПРАВЛЕНИЯ ЭКРАНОМ ИГРОКОВ (PLAYER VIEWPORT QUICK BAR) */}
-        <div className="absolute top-4 right-4 z-40 flex items-center gap-2 bg-[#151619]/90 backdrop-blur-md border border-[#2A2B30] p-1.5 rounded-xl shadow-2xl font-mono text-xs">
+        <div className="absolute top-4 right-4 z-40 flex items-center gap-1.5 bg-[#151619]/95 backdrop-blur-md border border-[#2A2B30] p-1.5 rounded-xl shadow-2xl font-mono text-xs">
+          {/* Статус и разрешение проектора */}
           <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#0B0C0E] border border-[#22242A]">
             <span className={`w-2 h-2 rounded-full ${isConnectedToPlayer ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
             <Tv size={14} className="text-[#F27D26]" />
             <span className="font-bold text-white text-[11px]">
-              {isConnectedToPlayer ? `ИГРОКИ [${playerScreenSize.width}x${playerScreenSize.height}]` : 'ЭКРАН ИГРОКОВ'}
+              {playerScreenSize.width}×{playerScreenSize.height}
+            </span>
+            <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+              {Math.round((effectivePlayerViewport.scale || 1) * 100)}%
             </span>
           </div>
 
+          {/* Переключатель: Связана / Автономна */}
           <button
             onClick={() => setIsLinkedCamera(!isLinkedCamera)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold transition active:scale-95 ${
               isLinkedCamera
                 ? 'bg-[#F27D26] text-white shadow-md'
-                : 'bg-[#1F2024] text-[#A0A5B1] hover:text-white hover:bg-[#2A2B30]'
+                : 'bg-[#1F2024] text-[#00E5FF] hover:text-white hover:bg-[#2A2B30] border border-[#00E5FF]/30'
             }`}
-            title={isLinkedCamera ? 'Камера игроков привязана к виду Мастера' : 'Камера игроков автономна'}
+            title={isLinkedCamera ? 'Камера игроков повторяет вид Мастера' : 'Камера игроков автономна'}
           >
             {isLinkedCamera ? <Lock size={13} /> : <Unlock size={13} />}
-            <span>{isLinkedCamera ? 'СВЯЗЬ ВКЛ' : 'АВТОНОМНО'}</span>
+            <span>{isLinkedCamera ? 'СВЯЗЬ' : 'АВТОНОМНО'}</span>
           </button>
+
+          {/* Фиксация положения (Замок) */}
+          <button
+            onClick={handleToggleLockPosition}
+            className={`p-1.5 rounded-lg transition active:scale-95 ${
+              isPlayerViewportLocked
+                ? 'bg-amber-500 text-black font-bold shadow-md'
+                : 'bg-[#1F2024] text-[#8E9299] hover:text-white hover:bg-[#2A2B30]'
+            }`}
+            title={isPlayerViewportLocked ? 'Положение рамки зафиксировано. Нажмите для разблокировки.' : 'Зафиксировать положение рамки на карте.'}
+          >
+            <Lock size={13} />
+          </button>
+
+          {/* Кнопка открытия панели точной настройки */}
+          <button
+            onClick={() => setIsPlayerViewportModalOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#26282E] hover:bg-[#343740] text-[#38BDF8] hover:text-white transition active:scale-95 font-bold"
+            title="Открыть точное управление (Nudge, зум, пресеты разрешения)"
+          >
+            <Sliders size={13} />
+            <span>Настройка</span>
+          </button>
+
+          <div className="w-[1px] h-4 bg-[#333640] mx-0.5" />
 
           <button
             onClick={handleCenterPlayerOnDmView}
@@ -1908,7 +1957,7 @@ export const DMView: React.FC = () => {
             className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1F2024] hover:bg-[#2A2B30] text-[#D0D4DC] hover:text-white transition active:scale-95"
             title="Переместить камеру Мастера к рамке Игроков"
           >
-            <Tv size={13} className="text-[#38BDF8]" />
+            <Eye size={13} className="text-[#38BDF8]" />
             <span>Найти рамку</span>
           </button>
 
@@ -2051,6 +2100,27 @@ export const DMView: React.FC = () => {
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
         onOpenProjector={handleOpenPlayerWindow}
+      />
+
+      <PlayerViewportControlModal
+        isOpen={isPlayerViewportModalOpen}
+        onClose={() => setIsPlayerViewportModalOpen(false)}
+        playerViewport={effectivePlayerViewport}
+        dmViewport={viewport}
+        playerScreenSize={playerScreenSize}
+        isLinkedCamera={isLinkedCamera}
+        isPositionLocked={isPlayerViewportLocked}
+        isConnected={isConnectedToPlayer}
+        mapWidth={mapWidth}
+        mapHeight={mapHeight}
+        grid={grid}
+        onToggleLinkCamera={handleToggleLinkCamera}
+        onToggleLockPosition={handleToggleLockPosition}
+        onSetPlayerViewport={handleSetPlayerViewport}
+        onSetPlayerScreenSize={handleSetPlayerScreenSize}
+        onCenterOnPlayerView={handleCenterOnPlayerView}
+        onCenterPlayerOnDmView={handleCenterPlayerOnDmView}
+        onFitMapForPlayers={handleFitMapForPlayers}
       />
 
       {/* 6. ВСПЛЫВАЮЩИЕ УВЕДОМЛЕНИЯ ОПЕРАЦИЙ СО СТОЛОМ (TOAST HUD) */}

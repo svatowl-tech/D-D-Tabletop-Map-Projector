@@ -2,11 +2,18 @@
 
 [![CI Status](https://img.shields.io/github/actions/workflow/status/SvatOwl/vtt-zero-tabletop-projector/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/SvatOwl/vtt-zero-tabletop-projector/actions)
 [![Release Status](https://img.shields.io/github/actions/workflow/status/SvatOwl/vtt-zero-tabletop-projector/release.yml?label=Release%20Build&style=flat-square)](https://github.com/SvatOwl/vtt-zero-tabletop-projector/releases)
+[![Development Status](https://img.shields.io/badge/Status-Active%20Development%20%2F%20WIP-orange?style=flat-square)](https://github.com/SvatOwl/vtt-zero-tabletop-projector/issues)
 [![License](https://img.shields.io/badge/License-MIT-orange.svg?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-blue?style=flat-square)](#-platform-packages)
 [![RAM Usage](https://img.shields.io/badge/RAM%20Usage-%3C%2025%20MB-green?style=flat-square)](#-performance--hardware)
 
 **VTT-ZERO** — ультра-легковесный автономный инструмент для мастеров настольных ролевых игр (D&D, Pathfinder, Call of Cthulhu, Savage Worlds). Позволяет мгновенно выводить боевые карты и туман войны на второй монитор, ТВ или стол-проектор с нулевыми сетевыми задержками и минимальным потреблением оперативной памяти.
+
+> [!WARNING]
+> ### 🚧 Статус проекта: Активная разработка (Work in Progress / Beta)
+> Обратите внимание: приложение находится в **стадии активной разработки и постоянного улучшения**.
+> - В процессе работы могут встречаться временные ошибки, шероховатости, недоработки функционала и изменения интерфейса.
+> - Если вы столкнулись с багом или хотите предложить новую функцию, пожалуйста, откройте [**GitHub Issue**](https://github.com/SvatOwl/vtt-zero-tabletop-projector/issues). Любой фидбек крайне приветствуется!
 
 ---
 

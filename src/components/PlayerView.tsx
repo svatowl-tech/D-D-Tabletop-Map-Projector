@@ -211,11 +211,14 @@ export const PlayerView: React.FC = () => {
           }
           break;
 
-        case 'SYNC_VIEWPORT':
         case 'SET_PLAYER_VIEWPORT':
           if (message.transform) {
             setViewport(message.transform);
           }
+          break;
+
+        case 'SYNC_VIEWPORT':
+          // Личный вьюпорт Мастера не влияет на экран игроков (автономность камеры игроков)
           break;
 
         case 'SYNC_GRID':
